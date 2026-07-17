@@ -57,3 +57,33 @@ def test_uow_rolls_back_failed_collection_write(
 
     with uow_factory() as uow:
         assert uow.collections.list(project.id) == []
+
+
+def test_uow_invalidates_session_and_repositories_after_exit() -> None:
+    events: list[str] = []
+
+    class TrackingSession(Session):
+        def rollback(self) -> None:
+            events.append("rollback")
+            super().rollback()
+
+        def close(self) -> None:
+            events.append("close")
+            super().close()
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    uow = SqlAlchemyUnitOfWork(sessionmaker(bind=engine, class_=TrackingSession))
+
+    with pytest.raises(RuntimeError), uow:
+        repository = uow.projects
+        raise RuntimeError("abort")
+
+    assert uow.session is None
+    assert events == ["rollback", "close"]
+    with pytest.raises(RuntimeError):
+        uow.commit()
+    with pytest.raises(RuntimeError):
+        uow.rollback()
+    with pytest.raises(RuntimeError):
+        repository.list()

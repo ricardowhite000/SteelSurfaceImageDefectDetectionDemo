@@ -14,18 +14,34 @@ from steel_platform.infrastructure.repositories import (
 )
 
 
+class _ContextSession:
+    """Forwards repository access only while its Unit of Work is active."""
+
+    def __init__(self, uow: SqlAlchemyUnitOfWork, generation: int) -> None:
+        self._uow = uow
+        self._generation = generation
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._uow._require_session(self._generation), name)
+
+
 class SqlAlchemyUnitOfWork:
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
         self.session: Session | None = None
+        self._generation = 0
 
     def __enter__(self) -> SqlAlchemyUnitOfWork:
+        if self.session is not None:
+            raise RuntimeError("Unit of Work is already active")
+        self._generation += 1
         self.session = self._session_factory()
-        self.projects = SqlProjectRepository(self.session)
-        self.sources = SqlDataSourceRepository(self.session)
-        self.collections = SqlCollectionRepository(self.session)
-        self.imports = SqlImportRepository(self.session)
-        self.reviews = SqlReviewTaskRepository(self.session)
+        repository_session = _ContextSession(self, self._generation)
+        self.projects = SqlProjectRepository(repository_session)  # type: ignore[arg-type]
+        self.sources = SqlDataSourceRepository(repository_session)  # type: ignore[arg-type]
+        self.collections = SqlCollectionRepository(repository_session)  # type: ignore[arg-type]
+        self.imports = SqlImportRepository(repository_session)  # type: ignore[arg-type]
+        self.reviews = SqlReviewTaskRepository(repository_session)  # type: ignore[arg-type]
         self.data_sources = self.sources
         self.review_tasks = self.reviews
         return self
@@ -36,13 +52,17 @@ class SqlAlchemyUnitOfWork:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        if self.session is None:
+        session = self.session
+        if session is None:
             return
         try:
             if exc_type is not None:
-                self.session.rollback()
+                session.rollback()
         finally:
-            self.session.close()
+            try:
+                session.close()
+            finally:
+                self.session = None
 
     def commit(self) -> None:
         self._require_session().commit()
@@ -50,7 +70,7 @@ class SqlAlchemyUnitOfWork:
     def rollback(self) -> None:
         self._require_session().rollback()
 
-    def _require_session(self) -> Session:
-        if self.session is None:
+    def _require_session(self, generation: int | None = None) -> Session:
+        if self.session is None or (generation is not None and generation != self._generation):
             raise RuntimeError("Unit of Work has not been entered")
         return self.session
