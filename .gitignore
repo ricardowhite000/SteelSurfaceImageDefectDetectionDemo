@@ -1,0 +1,10 @@
+.idea/
+.superpowers/
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+
+AI/图像异常检测demo/yolov13-main/steel_platform/config/platform.local.yaml
+AI/图像异常检测demo/yolov13-main/steel_platform/artifacts/
+AI/图像异常检测demo/yolov13-main/steel_platform/workspace/
+

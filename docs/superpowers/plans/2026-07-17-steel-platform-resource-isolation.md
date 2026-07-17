@@ -763,7 +763,7 @@ git commit -m "feat: add task scoped review workspace"
 - Modify: `AI/图像异常检测demo/yolov13-main/steel_platform/tests/test_vertical_workflow.py`
 - Create: `AI/图像异常检测demo/yolov13-main/steel_platform/tests/test_resource_isolation_e2e.py`
 - Modify: `AI/图像异常检测demo/yolov13-main/steel_platform/README.md`
-- Modify: `AI/图像异常检测demo/yolov13-main/steel_platform/config/platform.local.yaml`
+- Create: `AI/图像异常检测demo/yolov13-main/steel_platform/config/platform.example.yaml`
 
 **Interfaces:**
 - Adds a full temporary two-project test and live verification commands.
@@ -850,7 +850,7 @@ git diff --check
 git status --short
 ```
 
-Expected: full suite passes; diff check is clean; only intended source, tests, docs, migration, and configuration changes are present.
+Expected: full suite passes; diff check is clean; only intended source, tests, docs, migration, and example-configuration changes are present. `config/platform.local.yaml` remains ignored and unmodified.
 
 ```powershell
 git add -- AI/图像异常检测demo/yolov13-main/steel_platform docs/superpowers/plans/2026-07-17-steel-platform-resource-isolation.md
