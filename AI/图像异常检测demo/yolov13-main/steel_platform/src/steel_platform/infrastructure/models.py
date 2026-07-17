@@ -25,17 +25,42 @@ class ProjectModel(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     schema_version: Mapped[str] = mapped_column(String(50), default="steel-defects-v1")
+    class_schema_id: Mapped[str | None] = mapped_column(ForeignKey("class_schemas.id"))
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class ClassSchemaModel(Base):
+    __tablename__ = "class_schemas"
+    id: Mapped[str] = mapped_column(String(100), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    names_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", "version", name="uq_class_schema_version"),
+    )
 
 
 class SourceRootModel(Base):
     __tablename__ = "source_roots"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    name: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+        default=lambda context: context.get_current_parameters()["kind"],
+    )
     kind: Mapped[str] = mapped_column(String(50), nullable=False)
+    mode: Mapped[str] = mapped_column(String(30), default="external", nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="available", nullable=False)
     path: Mapped[str] = mapped_column(Text, nullable=False)
     read_only: Mapped[bool] = mapped_column(Boolean, default=True)
-    __table_args__ = (UniqueConstraint("project_id", "kind", name="uq_source_root_kind"),)
+    manifest_sha256: Mapped[str | None] = mapped_column(String(64))
+    last_verified_at: Mapped[datetime | None] = mapped_column()
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_source_root_name"),)
 
 
 class AssetModel(Base):
@@ -49,6 +74,7 @@ class AssetModel(Base):
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     media_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    modified_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     __table_args__ = (UniqueConstraint("project_id", "kind", "relative_path", name="uq_asset_path"),)
 
@@ -104,10 +130,71 @@ class ReviewRoundModel(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
     number: Mapped[int] = mapped_column(Integer, nullable=False)
     kind: Mapped[str] = mapped_column(String(30), default="training")
+    name: Mapped[str] = mapped_column(String(200), default="复核任务", nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    source_collection_id: Mapped[str | None] = mapped_column(ForeignKey("collections.id"))
+    class_schema_id: Mapped[str | None] = mapped_column(ForeignKey("class_schemas.id"))
+    target_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="active")
     per_class: Mapped[int] = mapped_column(Integer, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     __table_args__ = (UniqueConstraint("project_id", "number", "kind", name="uq_review_round"),)
+
+
+class CollectionModel(Base):
+    __tablename__ = "collections"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey("collections.id"))
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    __table_args__ = (
+        UniqueConstraint("project_id", "parent_id", "name", name="uq_collection_sibling_name"),
+    )
+
+
+class CollectionMemberModel(Base):
+    __tablename__ = "collection_members"
+    collection_id: Mapped[str] = mapped_column(ForeignKey("collections.id"), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(ForeignKey("assets.id"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class ImportSessionModel(Base):
+    __tablename__ = "import_sessions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    data_source_id: Mapped[str] = mapped_column(ForeignKey("source_roots.id"), nullable=False)
+    collection_id: Mapped[str] = mapped_column(ForeignKey("collections.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="planned", nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
+
+
+class ImportEntryModel(Base):
+    __tablename__ = "import_entries"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    import_session_id: Mapped[str] = mapped_column(ForeignKey("import_sessions.id"), nullable=False)
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    modified_at: Mapped[datetime | None] = mapped_column()
+    media_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    expected_sha256: Mapped[str | None] = mapped_column(String(64))
+    actual_sha256: Mapped[str | None] = mapped_column(String(64))
+    storage_key: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="planned", nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
+    __table_args__ = (
+        UniqueConstraint("import_session_id", "relative_path", name="uq_import_entry_path"),
+    )
 
 
 class ReviewItemModel(Base):

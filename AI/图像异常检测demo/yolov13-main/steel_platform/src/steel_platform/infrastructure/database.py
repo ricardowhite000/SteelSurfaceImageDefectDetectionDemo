@@ -29,11 +29,11 @@ def _alembic_config(database_url: str) -> Config:
     return config
 
 
-def upgrade_database(database_url: str) -> None:
+def upgrade_database(database_url: str, revision: str = "head") -> None:
     if database_url.startswith("sqlite:///"):
         database_path = Path(database_url.removeprefix("sqlite:///"))
         database_path.parent.mkdir(parents=True, exist_ok=True)
-    command.upgrade(_alembic_config(database_url), "head")
+    command.upgrade(_alembic_config(database_url), revision)
 
 
 def database_version(database_url: str) -> tuple[str | None, str]:
