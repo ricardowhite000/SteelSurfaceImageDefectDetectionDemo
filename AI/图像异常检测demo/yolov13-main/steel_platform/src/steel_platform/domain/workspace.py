@@ -29,6 +29,12 @@ class ImportStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class ImportEntryStatus(StrEnum):
+    PLANNED = "planned"
+    VERIFIED = "verified"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True, slots=True)
 class ClassSchema:
     id: str
@@ -62,6 +68,11 @@ class DataSource:
     root_path: str
     status: SourceStatus
     revision: int
+    manifest_sha256: str | None = None
+
+    @property
+    def locator(self) -> str:
+        return self.root_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,11 +104,46 @@ class ImportEntry:
     project_id: str
     import_session_id: str
     relative_path: str
-    status: ImportStatus
+    status: ImportEntryStatus
     revision: int
+    size_bytes: int = 0
+    media_type: str = "application/octet-stream"
+    expected_sha256: str | None = None
+    actual_sha256: str | None = None
+    storage_key: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "relative_path", normalize_relative_path(self.relative_path))
+
+
+@dataclass(frozen=True, slots=True)
+class Asset:
+    id: str
+    project_id: str
+    data_source_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    media_type: str
+    storage_key: str | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "relative_path", normalize_relative_path(self.relative_path))
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestEntry:
+    relative_path: str
+    size_bytes: int
+    media_type: str
+    sha256: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "relative_path", normalize_relative_path(self.relative_path))
+        if self.size_bytes < 0:
+            raise ValueError("size_bytes must not be negative")
+        if len(self.sha256) != 64 or any(character not in "0123456789abcdef" for character in self.sha256):
+            raise ValueError("sha256 must be a lowercase hexadecimal digest")
 
 
 @dataclass(frozen=True, slots=True)

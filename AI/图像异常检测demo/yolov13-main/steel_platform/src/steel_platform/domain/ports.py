@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from typing import Any, BinaryIO, Protocol, Sequence
 
 from steel_platform.domain.workspace import (
+    Asset,
     Collection,
     DataSource,
     ExplorerResource,
     IdempotencyRecord,
     ImportEntry,
     ImportSession,
+    ManifestEntry,
     Project,
 )
 
@@ -58,6 +60,16 @@ class DataSourceRepository(Protocol):
     def get(self, project_id: str, data_source_id: str) -> DataSource | None: ...
     def list(self, project_id: str) -> Sequence[DataSource]: ...
     def add(self, project_id: str, data_source: DataSource) -> None: ...
+    def update_binding(
+        self,
+        project_id: str,
+        data_source_id: str,
+        *,
+        root_path: str,
+        status: str,
+        manifest_sha256: str,
+        expected_revision: int,
+    ) -> DataSource | None: ...
 
 
 class CollectionRepository(Protocol):
@@ -88,6 +100,36 @@ class ImportRepository(Protocol):
     def add_session(self, project_id: str, session: ImportSession) -> None: ...
     def list_entries(self, project_id: str, import_session_id: str) -> Sequence[ImportEntry]: ...
     def add_entry(self, project_id: str, entry: ImportEntry) -> None: ...
+    def get_entry(self, project_id: str, import_session_id: str, entry_id: str) -> ImportEntry | None: ...
+    def find_entry(
+        self,
+        project_id: str,
+        import_session_id: str,
+        relative_path: str,
+    ) -> ImportEntry | None: ...
+    def mark_verified(
+        self,
+        project_id: str,
+        import_session_id: str,
+        entry_id: str,
+        *,
+        actual_sha256: str,
+        storage_key: str | None,
+    ) -> ImportEntry | None: ...
+    def transition_session(
+        self,
+        project_id: str,
+        import_session_id: str,
+        *,
+        allowed: Sequence[str],
+        target: str,
+    ) -> ImportSession | None: ...
+
+
+class AssetRepository(Protocol):
+    def get(self, project_id: str, asset_id: str) -> Asset | None: ...
+    def list_by_source(self, project_id: str, data_source_id: str) -> Sequence[Asset]: ...
+    def add(self, project_id: str, asset: Asset) -> None: ...
 
 
 class ReviewTaskRepository(Protocol):
@@ -116,12 +158,19 @@ class DirectoryPicker(Protocol):
     def pick_directory(self, *, title: str) -> str | None: ...
 
 
+class FolderReader(Protocol):
+    def canonicalize(self, locator: str) -> str: ...
+    def scan(self, locator: str) -> Sequence[ManifestEntry]: ...
+    def open_readonly(self, locator: str, relative_path: str) -> BinaryIO: ...
+
+
 class UnitOfWork(AbstractContextManager, Protocol):
     repository: Repository
     projects: ProjectRepository
     data_sources: DataSourceRepository
     collections: CollectionRepository
     imports: ImportRepository
+    assets: AssetRepository
     review_tasks: ReviewTaskRepository
     explorer: ExplorerRepository
     idempotency: IdempotencyRepository
@@ -131,6 +180,13 @@ class UnitOfWork(AbstractContextManager, Protocol):
 
 class ArtifactStore(Protocol):
     def put_bytes(self, content: bytes, *, media_type: str) -> Any: ...
+    def put_stream(
+        self,
+        stream: BinaryIO,
+        *,
+        media_type: str,
+        expected_sha256: str | None = None,
+    ) -> Any: ...
     def open(self, storage_key: str) -> BinaryIO: ...
 
 

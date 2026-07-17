@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from steel_platform.domain.workspace import (
+    Asset,
     Collection,
     ConcurrentAllocationError,
     DataSource,
@@ -15,6 +16,7 @@ from steel_platform.domain.workspace import (
     IdempotencyRecord,
     IdempotencyReservationConflict,
     ImportEntry,
+    ImportEntryStatus,
     ImportSession,
     ImportStatus,
     Project,
@@ -59,6 +61,7 @@ def _source(model: SourceRootModel) -> DataSource:
         root_path=model.path,
         status=SourceStatus(model.status),
         revision=model.revision,
+        manifest_sha256=model.manifest_sha256,
     )
 
 
@@ -89,8 +92,28 @@ def _import_entry(model: ImportEntryModel) -> ImportEntry:
         project_id=model.project_id,
         import_session_id=model.import_session_id,
         relative_path=model.relative_path,
-        status=ImportStatus(model.status),
+        status=ImportEntryStatus(model.status),
         revision=model.revision,
+        size_bytes=model.size_bytes,
+        media_type=model.media_type,
+        expected_sha256=model.expected_sha256,
+        actual_sha256=model.actual_sha256,
+        storage_key=model.storage_key,
+    )
+
+
+def _asset(model: AssetModel) -> Asset:
+    if model.source_root_id is None or model.relative_path is None:
+        raise ValueError("registered import asset is missing source metadata")
+    return Asset(
+        id=model.id,
+        project_id=model.project_id,
+        data_source_id=model.source_root_id,
+        relative_path=model.relative_path,
+        sha256=model.sha256,
+        size_bytes=model.size_bytes,
+        media_type=model.media_type,
+        storage_key=model.storage_key,
     )
 
 
@@ -183,9 +206,39 @@ class SqlDataSourceRepository:
                 mode=entity.mode.value,
                 path=entity.root_path,
                 status=entity.status.value,
+                manifest_sha256=entity.manifest_sha256,
                 revision=entity.revision,
             )
         )
+
+    def update_binding(
+        self,
+        project_id: str,
+        data_source_id: str,
+        *,
+        root_path: str,
+        status: str,
+        manifest_sha256: str,
+        expected_revision: int,
+    ) -> DataSource | None:
+        result = self._session.execute(
+            update(SourceRootModel)
+            .where(
+                SourceRootModel.project_id == project_id,
+                SourceRootModel.id == data_source_id,
+                SourceRootModel.revision == expected_revision,
+            )
+            .values(
+                path=root_path,
+                status=status,
+                manifest_sha256=manifest_sha256,
+                last_verified_at=func.now(),
+                revision=expected_revision + 1,
+            )
+        )
+        if result.rowcount != 1:
+            return None
+        return self.get(project_id, data_source_id)
 
 
 class SqlCollectionRepository:
@@ -360,10 +413,127 @@ class SqlImportRepository:
                 project_id=entry.project_id,
                 import_session_id=entry.import_session_id,
                 relative_path=entry.relative_path,
-                size_bytes=0,
-                media_type="application/octet-stream",
+                size_bytes=entry.size_bytes,
+                media_type=entry.media_type,
+                expected_sha256=entry.expected_sha256,
+                actual_sha256=entry.actual_sha256,
+                storage_key=entry.storage_key,
                 status=entry.status.value,
                 revision=entry.revision,
+            )
+        )
+
+    def get_entry(self, project_id: str, import_session_id: str, entry_id: str) -> ImportEntry | None:
+        model = self._session.scalar(
+            select(ImportEntryModel).where(
+                ImportEntryModel.project_id == project_id,
+                ImportEntryModel.import_session_id == import_session_id,
+                ImportEntryModel.id == entry_id,
+            )
+        )
+        return _import_entry(model) if model is not None else None
+
+    def find_entry(
+        self,
+        project_id: str,
+        import_session_id: str,
+        relative_path: str,
+    ) -> ImportEntry | None:
+        model = self._session.scalar(
+            select(ImportEntryModel).where(
+                ImportEntryModel.project_id == project_id,
+                ImportEntryModel.import_session_id == import_session_id,
+                ImportEntryModel.relative_path == relative_path,
+            )
+        )
+        return _import_entry(model) if model is not None else None
+
+    def mark_verified(
+        self,
+        project_id: str,
+        import_session_id: str,
+        entry_id: str,
+        *,
+        actual_sha256: str,
+        storage_key: str | None,
+    ) -> ImportEntry | None:
+        result = self._session.execute(
+            update(ImportEntryModel)
+            .where(
+                ImportEntryModel.project_id == project_id,
+                ImportEntryModel.import_session_id == import_session_id,
+                ImportEntryModel.id == entry_id,
+                ImportEntryModel.status != ImportEntryStatus.VERIFIED.value,
+            )
+            .values(
+                actual_sha256=actual_sha256,
+                storage_key=storage_key,
+                status=ImportEntryStatus.VERIFIED.value,
+                revision=ImportEntryModel.revision + 1,
+            )
+        )
+        if result.rowcount != 1:
+            return self.get_entry(project_id, import_session_id, entry_id)
+        return self.get_entry(project_id, import_session_id, entry_id)
+
+    def transition_session(
+        self,
+        project_id: str,
+        import_session_id: str,
+        *,
+        allowed: Sequence[str],
+        target: str,
+    ) -> ImportSession | None:
+        result = self._session.execute(
+            update(ImportSessionModel)
+            .where(
+                ImportSessionModel.project_id == project_id,
+                ImportSessionModel.id == import_session_id,
+                ImportSessionModel.status.in_(allowed),
+            )
+            .values(status=target, revision=ImportSessionModel.revision + 1)
+        )
+        if result.rowcount != 1:
+            return None
+        return self.get_session(project_id, import_session_id)
+
+
+class SqlAssetRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get(self, project_id: str, asset_id: str) -> Asset | None:
+        model = self._session.scalar(
+            select(AssetModel).where(AssetModel.project_id == project_id, AssetModel.id == asset_id)
+        )
+        return _asset(model) if model is not None else None
+
+    def list_by_source(self, project_id: str, data_source_id: str) -> Sequence[Asset]:
+        return tuple(
+            _asset(model)
+            for model in self._session.scalars(
+                select(AssetModel)
+                .where(
+                    AssetModel.project_id == project_id,
+                    AssetModel.source_root_id == data_source_id,
+                )
+                .order_by(AssetModel.relative_path)
+            )
+        )
+
+    def add(self, project_id: str, asset: Asset) -> None:
+        _assert_project(project_id, asset.project_id)
+        self._session.add(
+            AssetModel(
+                id=asset.id,
+                project_id=asset.project_id,
+                source_root_id=asset.data_source_id,
+                kind="image",
+                relative_path=asset.relative_path,
+                storage_key=asset.storage_key,
+                sha256=asset.sha256,
+                size_bytes=asset.size_bytes,
+                media_type=asset.media_type,
             )
         )
 

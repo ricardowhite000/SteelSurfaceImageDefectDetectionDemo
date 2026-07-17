@@ -6,6 +6,7 @@ from types import TracebackType
 from sqlalchemy.orm import Session
 
 from steel_platform.infrastructure.repositories import (
+    SqlAssetRepository,
     SqlCollectionRepository,
     SqlDataSourceRepository,
     SqlExplorerRepository,
@@ -43,6 +44,7 @@ class SqlAlchemyUnitOfWork:
         self.sources = SqlDataSourceRepository(repository_session)  # type: ignore[arg-type]
         self.collections = SqlCollectionRepository(repository_session)  # type: ignore[arg-type]
         self.imports = SqlImportRepository(repository_session)  # type: ignore[arg-type]
+        self.assets = SqlAssetRepository(repository_session)  # type: ignore[arg-type]
         self.review_tasks = SqlReviewTaskRepository(repository_session)  # type: ignore[arg-type]
         self.explorer = SqlExplorerRepository(repository_session)  # type: ignore[arg-type]
         self.idempotency = SqlIdempotencyRepository(repository_session)  # type: ignore[arg-type]
