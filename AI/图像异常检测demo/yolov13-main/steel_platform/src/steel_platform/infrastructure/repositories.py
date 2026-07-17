@@ -5,12 +5,15 @@ from typing import Any, overload
 
 from sqlalchemy import Select, and_, delete, func, select, update
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from steel_platform.domain.workspace import (
     Collection,
+    ConcurrentAllocationError,
     DataSource,
     ExplorerResource,
     IdempotencyRecord,
+    IdempotencyReservationConflict,
     ImportEntry,
     ImportSession,
     ImportStatus,
@@ -421,7 +424,10 @@ class SqlReviewTaskRepository:
             per_class=sample_size,
         )
         self._session.add(review_round)
-        self._session.flush()
+        try:
+            self._session.flush()
+        except IntegrityError as exc:
+            raise ConcurrentAllocationError("review round number") from exc
         self._session.add_all(
             ReviewItemModel(
                 round_id=review_round.id,
@@ -529,7 +535,7 @@ class SqlIdempotencyRepository:
             return None
         return IdempotencyRecord(model.key, model.scope, dict(model.response_json))
 
-    def add(self, record: IdempotencyRecord) -> None:
+    def reserve(self, record: IdempotencyRecord) -> None:
         self._session.add(
             IdempotencyRecordModel(
                 key=record.key,
@@ -537,3 +543,14 @@ class SqlIdempotencyRepository:
                 response_json=record.response,
             )
         )
+        try:
+            self._session.flush()
+        except IntegrityError as exc:
+            raise IdempotencyReservationConflict(record.key) from exc
+
+    def set_response(self, key: str, response: dict[str, object]) -> None:
+        model = self._session.get(IdempotencyRecordModel, key)
+        if model is None:
+            raise RuntimeError("idempotency key must be reserved before setting its response")
+        model.response_json = response
+        self._session.flush()

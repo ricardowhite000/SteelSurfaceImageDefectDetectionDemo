@@ -12,6 +12,11 @@ from steel_platform.application.errors import ApplicationError, NotFoundError, R
 from steel_platform.application.explorer import ExplorerService, ReviewTaskCreationService
 from steel_platform.application.projects import CreateProjectCommand, ProjectCatalogService
 from steel_platform.domain.workspace import DataSource, SourceMode, SourceStatus
+from steel_platform.domain.workspace import (
+    ConcurrentAllocationError,
+    IdempotencyReservationConflict,
+    IdempotencyRecord,
+)
 from steel_platform.infrastructure.models import (
     AssetModel,
     Base,
@@ -57,11 +62,23 @@ def test_project_creation_requires_idempotency_key_and_retry_returns_original(
     assert error.value.code == "validation_error"
 
     first = service.create_project(_command("project-one"), "create-project-one")
-    retried = service.create_project(_command("project-one", "ignored retry name"), "create-project-one")
+    retried = service.create_project(_command("project-one"), "create-project-one")
 
     assert retried == first
     assert first.id == "project-one"
     assert service.list_projects() == [first]
+
+
+def test_project_idempotency_key_rejects_changed_payload(
+    uow_factory: Callable[[], SqlAlchemyUnitOfWork],
+) -> None:
+    service = ProjectCatalogService(uow_factory)
+    service.create_project(_command("project-one"), "create-project-one")
+
+    with pytest.raises(ApplicationError) as error:
+        service.create_project(_command("project-one", "changed name"), "create-project-one")
+
+    assert error.value.code == "idempotency_conflict"
 
 
 def test_idempotency_key_cannot_be_reused_for_another_project(
@@ -242,16 +259,29 @@ def test_collection_edits_are_project_scoped_and_revision_checked(
         session.commit()
 
     with pytest.raises(NotFoundError):
-        explorer.add_members(first.id, parent.id, ["foreign-asset"], expected_revision=renamed.revision)
+        explorer.add_members(
+            first.id,
+            parent.id,
+            ["foreign-asset"],
+            expected_revision=renamed.revision,
+            idempotency_key="add-foreign",
+        )
 
     changed = explorer.add_members(
         first.id,
         parent.id,
         ["asset-one", "asset-two"],
         expected_revision=renamed.revision,
+        idempotency_key="add-two-assets",
     )
     assert changed.revision == 2
-    changed = explorer.remove_member(first.id, parent.id, "asset-two", expected_revision=changed.revision)
+    changed = explorer.remove_member(
+        first.id,
+        parent.id,
+        "asset-two",
+        expected_revision=changed.revision,
+        idempotency_key="remove-asset-two",
+    )
     assert changed.revision == 3
     assert explorer.list_members(first.id, parent.id) == ("asset-one",)
 
@@ -284,11 +314,23 @@ def test_task_members_remain_frozen_when_collection_changes(
         collection.id,
         ["asset-1", "asset-2"],
         expected_revision=collection.revision,
+        idempotency_key="add-initial-members",
     )
     review = ReviewTaskCreationService(uow_factory, explorer=explorer)
 
-    round_id = review.create_from_collection(project.id, collection.id, sample_size=2)
-    explorer.add_members(project.id, collection.id, ["asset-3"], expected_revision=collection.revision)
+    round_id = review.create_from_collection(
+        project.id,
+        collection.id,
+        sample_size=2,
+        idempotency_key="create-review-task",
+    )
+    explorer.add_members(
+        project.id,
+        collection.id,
+        ["asset-3"],
+        expected_revision=collection.revision,
+        idempotency_key="add-later-member",
+    )
 
     items = review.list_items(project.id, round_id)
     assert items.total == 2
@@ -330,13 +372,310 @@ def test_review_snapshot_is_stored_as_review_items(
         )
         session.commit()
     collection = explorer.add_members(
-        project.id, collection.id, ["asset-one"], expected_revision=collection.revision
+        project.id,
+        collection.id,
+        ["asset-one"],
+        expected_revision=collection.revision,
+        idempotency_key="add-snapshot-member",
     )
 
     ReviewTaskCreationService(uow_factory, explorer=explorer).create_from_collection(
-        project.id, collection.id, sample_size=1
+        project.id,
+        collection.id,
+        sample_size=1,
+        idempotency_key="create-snapshot-task",
     )
 
     with session_factory() as session:
         assert session.scalar(select(func.count()).select_from(ReviewRoundModel)) == 1
         assert session.scalar(select(func.count()).select_from(ReviewItemModel)) == 1
+
+
+def test_collection_member_writes_require_keys_and_replay_identical_responses(
+    uow_factory: Callable[[], SqlAlchemyUnitOfWork],
+    session_factory: sessionmaker[Session],
+) -> None:
+    project = ProjectCatalogService(uow_factory).create_project(_command("project-one"), "create-one")
+    explorer = ExplorerService(uow_factory)
+    collection = explorer.create_collection(project.id, "members")
+    with session_factory() as session:
+        session.add_all(
+            AssetModel(
+                id=f"asset-{index}",
+                project_id=project.id,
+                kind="image",
+                relative_path=f"{index}.bmp",
+                sha256=str(index) * 64,
+                size_bytes=1,
+                media_type="image/bmp",
+            )
+            for index in range(1, 3)
+        )
+        session.commit()
+
+    with pytest.raises(ApplicationError) as missing:
+        explorer.add_members(
+            project.id,
+            collection.id,
+            ["asset-1"],
+            expected_revision=0,
+            idempotency_key=" ",
+        )
+    assert missing.value.code == "validation_error"
+
+    changed = explorer.add_members(
+        project.id,
+        collection.id,
+        ["asset-1"],
+        expected_revision=0,
+        idempotency_key="add-member",
+    )
+    replayed = explorer.add_members(
+        project.id,
+        collection.id,
+        ["asset-1"],
+        expected_revision=0,
+        idempotency_key="add-member",
+    )
+    assert replayed == changed
+    assert explorer.list_members(project.id, collection.id) == ("asset-1",)
+
+    with pytest.raises(ApplicationError) as changed_payload:
+        explorer.add_members(
+            project.id,
+            collection.id,
+            ["asset-2"],
+            expected_revision=0,
+            idempotency_key="add-member",
+        )
+    assert changed_payload.value.code == "idempotency_conflict"
+
+    removed = explorer.remove_member(
+        project.id,
+        collection.id,
+        "asset-1",
+        expected_revision=changed.revision,
+        idempotency_key="remove-member",
+    )
+    assert explorer.remove_member(
+        project.id,
+        collection.id,
+        "asset-1",
+        expected_revision=changed.revision,
+        idempotency_key="remove-member",
+    ) == removed
+    with pytest.raises(ApplicationError) as changed_remove_payload:
+        explorer.remove_member(
+            project.id,
+            collection.id,
+            "asset-1",
+            expected_revision=removed.revision,
+            idempotency_key="remove-member",
+        )
+    assert changed_remove_payload.value.code == "idempotency_conflict"
+    with pytest.raises(ApplicationError) as missing_remove_key:
+        explorer.remove_member(
+            project.id,
+            collection.id,
+            "asset-1",
+            expected_revision=removed.revision,
+            idempotency_key=" ",
+        )
+    assert missing_remove_key.value.code == "validation_error"
+
+
+def test_task_creation_requires_key_and_replays_without_duplicate_rows(
+    uow_factory: Callable[[], SqlAlchemyUnitOfWork],
+    session_factory: sessionmaker[Session],
+) -> None:
+    project = ProjectCatalogService(uow_factory).create_project(_command("project-one"), "create-one")
+    explorer = ExplorerService(uow_factory)
+    collection = explorer.create_collection(project.id, "task members")
+    with session_factory() as session:
+        session.add(
+            AssetModel(
+                id="asset-one",
+                project_id=project.id,
+                kind="image",
+                relative_path="one.bmp",
+                sha256="1" * 64,
+                size_bytes=1,
+                media_type="image/bmp",
+            )
+        )
+        session.commit()
+    collection = explorer.add_members(
+        project.id,
+        collection.id,
+        ["asset-one"],
+        expected_revision=collection.revision,
+        idempotency_key="add-task-member",
+    )
+    review = ReviewTaskCreationService(uow_factory, explorer=explorer)
+
+    with pytest.raises(ApplicationError) as missing:
+        review.create_from_collection(
+            project.id,
+            collection.id,
+            sample_size=1,
+            idempotency_key=" ",
+        )
+    assert missing.value.code == "validation_error"
+
+    first = review.create_from_collection(
+        project.id,
+        collection.id,
+        sample_size=1,
+        idempotency_key="create-task",
+    )
+    replayed = review.create_from_collection(
+        project.id,
+        collection.id,
+        sample_size=1,
+        idempotency_key="create-task",
+    )
+    assert replayed == first
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(ReviewRoundModel)) == 1
+        assert session.scalar(select(func.count()).select_from(ReviewItemModel)) == 1
+
+    with pytest.raises(ApplicationError) as changed_payload:
+        review.create_from_collection(
+            project.id,
+            collection.id,
+            sample_size=2,
+            idempotency_key="create-task",
+        )
+    assert changed_payload.value.code == "idempotency_conflict"
+
+
+def test_sql_idempotency_reservation_translates_unique_conflict(
+    uow_factory: Callable[[], SqlAlchemyUnitOfWork],
+) -> None:
+    record = IdempotencyRecord("reserved", "scope", {})
+    with uow_factory() as uow:
+        uow.idempotency.reserve(record)
+        uow.commit()
+
+    with pytest.raises(IdempotencyReservationConflict), uow_factory() as uow:
+        uow.idempotency.reserve(record)
+
+
+class _RacingIdempotency:
+    def __init__(self, delegate: object) -> None:
+        self.delegate = delegate
+
+    def get(self, key: str) -> None:
+        return None
+
+    def reserve(self, record: IdempotencyRecord) -> None:
+        raise IdempotencyReservationConflict(record.key)
+
+
+class _ReviewAllocationConflict:
+    def __init__(self, delegate: object) -> None:
+        self.delegate = delegate
+
+    def create_from_collection(self, project_id: str, collection_id: str, sample_size: int) -> str:
+        raise ConcurrentAllocationError("review round number")
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.delegate, name)
+
+
+class _WrappedUow:
+    def __init__(self, inner: SqlAlchemyUnitOfWork, *, race_key: bool = False, allocation_conflict: bool = False) -> None:
+        self.inner = inner
+        self.race_key = race_key
+        self.allocation_conflict = allocation_conflict
+
+    def __enter__(self) -> _WrappedUow:
+        self.inner.__enter__()
+        self.projects = self.inner.projects
+        self.sources = self.inner.sources
+        self.collections = self.inner.collections
+        self.imports = self.inner.imports
+        self.explorer = self.inner.explorer
+        self.review_tasks = (
+            _ReviewAllocationConflict(self.inner.review_tasks)
+            if self.allocation_conflict
+            else self.inner.review_tasks
+        )
+        self.idempotency = (
+            _RacingIdempotency(self.inner.idempotency) if self.race_key else self.inner.idempotency
+        )
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.inner.__exit__(exc_type, exc, tb)  # type: ignore[arg-type]
+
+    def commit(self) -> None:
+        self.inner.commit()
+
+    def rollback(self) -> None:
+        self.inner.rollback()
+
+
+def test_project_creation_replays_after_reservation_race(
+    uow_factory: Callable[[], SqlAlchemyUnitOfWork],
+) -> None:
+    normal = ProjectCatalogService(uow_factory)
+    expected = normal.create_project(_command("project-one"), "race-key")
+    calls = 0
+
+    def racing_factory() -> object:
+        nonlocal calls
+        calls += 1
+        return _WrappedUow(uow_factory(), race_key=calls == 1)
+
+    assert ProjectCatalogService(racing_factory).create_project(  # type: ignore[arg-type]
+        _command("project-one"), "race-key"
+    ) == expected
+
+
+def test_task_creation_retries_allocation_conflict_and_uses_typed_port(
+    uow_factory: Callable[[], SqlAlchemyUnitOfWork],
+    session_factory: sessionmaker[Session],
+) -> None:
+    project = ProjectCatalogService(uow_factory).create_project(_command("project-one"), "create-one")
+    explorer = ExplorerService(uow_factory)
+    collection = explorer.create_collection(project.id, "members")
+    with session_factory() as session:
+        session.add(
+            AssetModel(
+                id="asset-one",
+                project_id=project.id,
+                kind="image",
+                relative_path="one.bmp",
+                sha256="1" * 64,
+                size_bytes=1,
+                media_type="image/bmp",
+            )
+        )
+        session.commit()
+    collection = explorer.add_members(
+        project.id,
+        collection.id,
+        ["asset-one"],
+        expected_revision=collection.revision,
+        idempotency_key="add-member",
+    )
+    calls = 0
+
+    def racing_factory() -> object:
+        nonlocal calls
+        calls += 1
+        return _WrappedUow(uow_factory(), allocation_conflict=calls == 1)
+
+    service = ReviewTaskCreationService(racing_factory)  # type: ignore[arg-type]
+    round_id = service.create_from_collection(
+        project.id,
+        collection.id,
+        sample_size=1,
+        idempotency_key="allocation-race",
+    )
+    assert service.list_items(project.id, round_id).total == 1
+    assert calls >= 3  # failed write, retry, then list
+
+    source = (Path(__file__).parents[1] / "src/steel_platform/application/explorer.py").read_text(encoding="utf-8")
+    assert ".reviews" not in source

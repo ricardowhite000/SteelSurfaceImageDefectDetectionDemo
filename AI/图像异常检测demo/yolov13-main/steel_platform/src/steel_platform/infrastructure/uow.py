@@ -43,11 +43,11 @@ class SqlAlchemyUnitOfWork:
         self.sources = SqlDataSourceRepository(repository_session)  # type: ignore[arg-type]
         self.collections = SqlCollectionRepository(repository_session)  # type: ignore[arg-type]
         self.imports = SqlImportRepository(repository_session)  # type: ignore[arg-type]
-        self.reviews = SqlReviewTaskRepository(repository_session)  # type: ignore[arg-type]
+        self.review_tasks = SqlReviewTaskRepository(repository_session)  # type: ignore[arg-type]
         self.explorer = SqlExplorerRepository(repository_session)  # type: ignore[arg-type]
         self.idempotency = SqlIdempotencyRepository(repository_session)  # type: ignore[arg-type]
         self.data_sources = self.sources
-        self.review_tasks = self.reviews
+        self.reviews = self.review_tasks
         return self
 
     def __exit__(

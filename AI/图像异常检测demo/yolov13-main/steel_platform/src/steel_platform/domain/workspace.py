@@ -122,6 +122,16 @@ class ReviewTaskItems:
     asset_ids: tuple[str, ...]
 
 
+class IdempotencyReservationConflict(RuntimeError):
+    def __init__(self, key: str) -> None:
+        super().__init__(f"idempotency key {key!r} was concurrently reserved")
+        self.key = key
+
+
+class ConcurrentAllocationError(RuntimeError):
+    pass
+
+
 def normalize_relative_path(value: str) -> str:
     candidate = PurePosixPath(value.replace("\\", "/"))
     if not value or candidate.is_absolute() or ":" in candidate.parts[0] or ".." in candidate.parts:

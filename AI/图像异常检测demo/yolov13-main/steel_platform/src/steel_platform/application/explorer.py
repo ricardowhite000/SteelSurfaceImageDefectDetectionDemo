@@ -5,8 +5,17 @@ from typing import TypedDict
 from uuid import uuid4
 
 from steel_platform.application.errors import ApplicationError, NotFoundError, RevisionConflictError
+from steel_platform.application.projects import canonical_scope, require_idempotency_key, require_matching_scope
 from steel_platform.domain.ports import UnitOfWork
-from steel_platform.domain.workspace import Collection, ExplorerResource, Project, ReviewTaskItems
+from steel_platform.domain.workspace import (
+    Collection,
+    ConcurrentAllocationError,
+    ExplorerResource,
+    IdempotencyRecord,
+    IdempotencyReservationConflict,
+    Project,
+    ReviewTaskItems,
+)
 
 
 class ExplorerNode(TypedDict):
@@ -114,19 +123,38 @@ class ExplorerService:
         asset_ids: Iterable[str],
         *,
         expected_revision: int,
+        idempotency_key: str,
     ) -> Collection:
+        key = require_idempotency_key(idempotency_key)
         member_ids = tuple(dict.fromkeys(asset_ids))
-        with self.uow_factory() as uow:
-            current = self._require_collection(uow, project_id, collection_id)
-            for asset_id in member_ids:
-                if not uow.explorer.asset_exists(project_id, asset_id):
-                    raise NotFoundError(f"asset {asset_id!r} was not found in project {project_id!r}")
-            changed = uow.collections.bump_revision(project_id, collection_id, expected_revision)
-            if changed is None:
-                raise RevisionConflictError(expected_revision, current.revision)
-            uow.collections.add_members(project_id, collection_id, member_ids)
-            uow.commit()
-            return changed
+        scope = canonical_scope(
+            "collection-add-members",
+            {
+                "project_id": project_id,
+                "collection_id": collection_id,
+                "asset_ids": sorted(member_ids),
+                "expected_revision": expected_revision,
+            },
+        )
+        try:
+            with self.uow_factory() as uow:
+                prior = uow.idempotency.get(key)
+                if prior is not None:
+                    return self._replay_collection(prior, scope)
+                current = self._require_collection(uow, project_id, collection_id)
+                for asset_id in member_ids:
+                    if not uow.explorer.asset_exists(project_id, asset_id):
+                        raise NotFoundError(f"asset {asset_id!r} was not found in project {project_id!r}")
+                uow.idempotency.reserve(IdempotencyRecord(key=key, scope=scope, response={}))
+                changed = uow.collections.bump_revision(project_id, collection_id, expected_revision)
+                if changed is None:
+                    raise RevisionConflictError(expected_revision, current.revision)
+                uow.collections.add_members(project_id, collection_id, member_ids)
+                uow.idempotency.set_response(key, self._collection_response(changed))
+                uow.commit()
+                return changed
+        except IdempotencyReservationConflict:
+            return self._replay_committed_collection(key, scope)
 
     def remove_member(
         self,
@@ -135,24 +163,84 @@ class ExplorerService:
         asset_id: str,
         *,
         expected_revision: int,
+        idempotency_key: str,
     ) -> Collection:
-        with self.uow_factory() as uow:
-            current = self._require_collection(uow, project_id, collection_id)
-            if not uow.explorer.asset_exists(project_id, asset_id):
-                raise NotFoundError(f"asset {asset_id!r} was not found in project {project_id!r}")
-            if asset_id not in uow.collections.list_members(project_id, collection_id):
-                raise NotFoundError(f"asset {asset_id!r} is not a member of collection {collection_id!r}")
-            changed = uow.collections.bump_revision(project_id, collection_id, expected_revision)
-            if changed is None:
-                raise RevisionConflictError(expected_revision, current.revision)
-            uow.collections.remove_member(project_id, collection_id, asset_id)
-            uow.commit()
-            return changed
+        key = require_idempotency_key(idempotency_key)
+        scope = canonical_scope(
+            "collection-remove-member",
+            {
+                "project_id": project_id,
+                "collection_id": collection_id,
+                "asset_id": asset_id,
+                "expected_revision": expected_revision,
+            },
+        )
+        try:
+            with self.uow_factory() as uow:
+                prior = uow.idempotency.get(key)
+                if prior is not None:
+                    return self._replay_collection(prior, scope)
+                current = self._require_collection(uow, project_id, collection_id)
+                if not uow.explorer.asset_exists(project_id, asset_id):
+                    raise NotFoundError(f"asset {asset_id!r} was not found in project {project_id!r}")
+                if asset_id not in uow.collections.list_members(project_id, collection_id):
+                    raise NotFoundError(f"asset {asset_id!r} is not a member of collection {collection_id!r}")
+                uow.idempotency.reserve(IdempotencyRecord(key=key, scope=scope, response={}))
+                changed = uow.collections.bump_revision(project_id, collection_id, expected_revision)
+                if changed is None:
+                    raise RevisionConflictError(expected_revision, current.revision)
+                uow.collections.remove_member(project_id, collection_id, asset_id)
+                uow.idempotency.set_response(key, self._collection_response(changed))
+                uow.commit()
+                return changed
+        except IdempotencyReservationConflict:
+            return self._replay_committed_collection(key, scope)
 
     def list_members(self, project_id: str, collection_id: str) -> tuple[str, ...]:
         with self.uow_factory() as uow:
             self._require_collection(uow, project_id, collection_id)
             return tuple(uow.collections.list_members(project_id, collection_id))
+
+    def _replay_committed_collection(self, key: str, scope: str) -> Collection:
+        for _ in range(3):
+            with self.uow_factory() as uow:
+                prior = uow.idempotency.get(key)
+                if prior is not None:
+                    return self._replay_collection(prior, scope)
+        raise ApplicationError(
+            "concurrency_conflict",
+            "Concurrent idempotency reservation did not become visible",
+            status_code=409,
+        )
+
+    @staticmethod
+    def _collection_response(collection: Collection) -> dict[str, object]:
+        return {
+            "id": collection.id,
+            "project_id": collection.project_id,
+            "name": collection.name,
+            "parent_id": collection.parent_id,
+            "revision": collection.revision,
+        }
+
+    @staticmethod
+    def _replay_collection(prior: IdempotencyRecord, scope: str) -> Collection:
+        require_matching_scope(prior, scope)
+        response = prior.response
+        try:
+            return Collection(
+                id=str(response["id"]),
+                project_id=str(response["project_id"]),
+                name=str(response["name"]),
+                parent_id=str(response["parent_id"]) if response["parent_id"] is not None else None,
+                revision=int(response["revision"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ApplicationError(
+                "idempotency_conflict",
+                "Stored idempotency response is incomplete",
+                status_code=409,
+            ) from exc
 
     @staticmethod
     def _require_project(uow: UnitOfWork, project_id: str) -> Project:
@@ -233,21 +321,86 @@ class ReviewTaskCreationService:
         self.uow_factory = uow_factory
         self.explorer = explorer or ExplorerService(uow_factory)
 
-    def create_from_collection(self, project_id: str, collection_id: str, *, sample_size: int) -> str:
+    _MAX_ALLOCATION_ATTEMPTS = 3
+
+    def create_from_collection(
+        self,
+        project_id: str,
+        collection_id: str,
+        *,
+        sample_size: int,
+        idempotency_key: str,
+    ) -> str:
         if sample_size <= 0:
             raise ApplicationError("validation_error", "sample_size must be positive", status_code=422)
-        with self.uow_factory() as uow:
-            ExplorerService._require_project(uow, project_id)
-            ExplorerService._require_collection(uow, project_id, collection_id)
-            round_id = uow.reviews.create_from_collection(project_id, collection_id, sample_size)
-            uow.commit()
-            return round_id
+        key = require_idempotency_key(idempotency_key)
+        scope = canonical_scope(
+            "review-task-create",
+            {
+                "project_id": project_id,
+                "collection_id": collection_id,
+                "sample_size": sample_size,
+            },
+        )
+        for attempt in range(self._MAX_ALLOCATION_ATTEMPTS):
+            try:
+                with self.uow_factory() as uow:
+                    prior = uow.idempotency.get(key)
+                    if prior is not None:
+                        return self._replay_round(uow, prior, scope)
+                    ExplorerService._require_project(uow, project_id)
+                    ExplorerService._require_collection(uow, project_id, collection_id)
+                    uow.idempotency.reserve(IdempotencyRecord(key=key, scope=scope, response={}))
+                    round_id = uow.review_tasks.create_from_collection(project_id, collection_id, sample_size)
+                    uow.idempotency.set_response(
+                        key,
+                        {"project_id": project_id, "round_id": round_id},
+                    )
+                    uow.commit()
+                    return round_id
+            except IdempotencyReservationConflict:
+                return self._replay_committed_round(key, scope)
+            except ConcurrentAllocationError as exc:
+                if attempt + 1 == self._MAX_ALLOCATION_ATTEMPTS:
+                    raise ApplicationError(
+                        "concurrency_conflict",
+                        "Could not allocate a review task number after bounded retries",
+                        status_code=409,
+                    ) from exc
+        raise AssertionError("unreachable")
 
     def list_items(self, project_id: str, round_id: str) -> ReviewTaskItems:
         with self.uow_factory() as uow:
             ExplorerService._require_project(uow, project_id)
-            if uow.reviews.get_round(project_id, round_id) is None:
+            if uow.review_tasks.get_round(project_id, round_id) is None:
                 raise NotFoundError(f"review task {round_id!r} was not found in project {project_id!r}")
-            items = uow.reviews.list_items(project_id, round_id, None)
+            items = uow.review_tasks.list_items(project_id, round_id, None)
             asset_ids = tuple(item.image_asset_id for item in items)
             return ReviewTaskItems(total=len(asset_ids), asset_ids=asset_ids)
+
+    def _replay_committed_round(self, key: str, scope: str) -> str:
+        for _ in range(3):
+            with self.uow_factory() as uow:
+                prior = uow.idempotency.get(key)
+                if prior is not None:
+                    return self._replay_round(uow, prior, scope)
+        raise ApplicationError(
+            "concurrency_conflict",
+            "Concurrent idempotency reservation did not become visible",
+            status_code=409,
+        )
+
+    @staticmethod
+    def _replay_round(uow: UnitOfWork, prior: IdempotencyRecord, scope: str) -> str:
+        require_matching_scope(prior, scope)
+        project_id = prior.response.get("project_id")
+        round_id = prior.response.get("round_id")
+        if not isinstance(project_id, str) or not isinstance(round_id, str):
+            raise ApplicationError(
+                "idempotency_conflict",
+                "Stored idempotency response is incomplete",
+                status_code=409,
+            )
+        if uow.review_tasks.get_round(project_id, round_id) is None:
+            raise NotFoundError("Idempotent review task result no longer exists")
+        return round_id
