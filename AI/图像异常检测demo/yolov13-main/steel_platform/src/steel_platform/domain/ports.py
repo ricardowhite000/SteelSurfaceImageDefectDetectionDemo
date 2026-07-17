@@ -4,7 +4,15 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any, BinaryIO, Protocol, Sequence
 
-from steel_platform.domain.workspace import Collection, DataSource, ImportEntry, ImportSession, Project
+from steel_platform.domain.workspace import (
+    Collection,
+    DataSource,
+    ExplorerResource,
+    IdempotencyRecord,
+    ImportEntry,
+    ImportSession,
+    Project,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +44,14 @@ class ProjectRepository(Protocol):
     def get(self, project_id: str) -> Project | None: ...
     def list(self) -> Sequence[Project]: ...
     def add(self, project: Project) -> None: ...
+    def add_project(
+        self,
+        name: str,
+        schema_name: str,
+        class_names: tuple[str, ...],
+        *,
+        project_id: str | None = None,
+    ) -> Project: ...
 
 
 class DataSourceRepository(Protocol):
@@ -48,6 +64,22 @@ class CollectionRepository(Protocol):
     def get(self, project_id: str, collection_id: str) -> Collection | None: ...
     def list(self, project_id: str, *, parent_id: str | None = None) -> Sequence[Collection]: ...
     def add(self, project_id: str, collection: Collection) -> None: ...
+    def rename(
+        self,
+        project_id: str,
+        collection_id: str,
+        name: str,
+        expected_revision: int,
+    ) -> Collection | None: ...
+    def bump_revision(
+        self,
+        project_id: str,
+        collection_id: str,
+        expected_revision: int,
+    ) -> Collection | None: ...
+    def list_members(self, project_id: str, collection_id: str) -> Sequence[str]: ...
+    def add_members(self, project_id: str, collection_id: str, asset_ids: Sequence[str]) -> None: ...
+    def remove_member(self, project_id: str, collection_id: str, asset_id: str) -> None: ...
 
 
 class ImportRepository(Protocol):
@@ -61,6 +93,17 @@ class ImportRepository(Protocol):
 class ReviewTaskRepository(Protocol):
     def get_round(self, project_id: str, round_id: str) -> ReviewTask | None: ...
     def list_items(self, project_id: str, round_id: str, filters: ReviewFilters) -> Sequence[Any]: ...
+    def create_from_collection(self, project_id: str, collection_id: str, sample_size: int) -> str: ...
+
+
+class ExplorerRepository(Protocol):
+    def list_resources(self, project_id: str) -> Sequence[ExplorerResource]: ...
+    def asset_exists(self, project_id: str, asset_id: str) -> bool: ...
+
+
+class IdempotencyRepository(Protocol):
+    def get(self, key: str) -> IdempotencyRecord | None: ...
+    def add(self, record: IdempotencyRecord) -> None: ...
 
 
 class DirectoryPicker(Protocol):
@@ -74,6 +117,8 @@ class UnitOfWork(AbstractContextManager, Protocol):
     collections: CollectionRepository
     imports: ImportRepository
     review_tasks: ReviewTaskRepository
+    explorer: ExplorerRepository
+    idempotency: IdempotencyRepository
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
 

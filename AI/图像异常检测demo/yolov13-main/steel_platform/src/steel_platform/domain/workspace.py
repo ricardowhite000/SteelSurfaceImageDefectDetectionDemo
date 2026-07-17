@@ -100,6 +100,28 @@ class ImportEntry:
         object.__setattr__(self, "relative_path", normalize_relative_path(self.relative_path))
 
 
+@dataclass(frozen=True, slots=True)
+class ExplorerResource:
+    id: str
+    type: str
+    name: str
+    count: int
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class IdempotencyRecord:
+    key: str
+    scope: str
+    response: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewTaskItems:
+    total: int
+    asset_ids: tuple[str, ...]
+
+
 def normalize_relative_path(value: str) -> str:
     candidate = PurePosixPath(value.replace("\\", "/"))
     if not value or candidate.is_absolute() or ":" in candidate.parts[0] or ".." in candidate.parts:

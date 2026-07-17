@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from steel_platform.infrastructure.repositories import (
     SqlCollectionRepository,
     SqlDataSourceRepository,
+    SqlExplorerRepository,
+    SqlIdempotencyRepository,
     SqlImportRepository,
     SqlProjectRepository,
     SqlReviewTaskRepository,
@@ -42,6 +44,8 @@ class SqlAlchemyUnitOfWork:
         self.collections = SqlCollectionRepository(repository_session)  # type: ignore[arg-type]
         self.imports = SqlImportRepository(repository_session)  # type: ignore[arg-type]
         self.reviews = SqlReviewTaskRepository(repository_session)  # type: ignore[arg-type]
+        self.explorer = SqlExplorerRepository(repository_session)  # type: ignore[arg-type]
+        self.idempotency = SqlIdempotencyRepository(repository_session)  # type: ignore[arg-type]
         self.data_sources = self.sources
         self.review_tasks = self.reviews
         return self

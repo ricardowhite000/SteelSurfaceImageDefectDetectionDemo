@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, overload
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, and_, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from steel_platform.domain.workspace import (
     Collection,
     DataSource,
+    ExplorerResource,
+    IdempotencyRecord,
     ImportEntry,
     ImportSession,
     ImportStatus,
@@ -17,10 +19,18 @@ from steel_platform.domain.workspace import (
     SourceStatus,
 )
 from steel_platform.infrastructure.models import (
+    AssetModel,
+    CandidatePredictionModel,
     ClassSchemaModel,
+    CollectionMemberModel,
     CollectionModel,
+    DatasetMemberModel,
+    DatasetVersionModel,
+    IdempotencyRecordModel,
     ImportEntryModel,
     ImportSessionModel,
+    InferenceRunModel,
+    ModelVersionModel,
     ProjectModel,
     ReviewItemModel,
     ReviewRoundModel,
@@ -107,8 +117,15 @@ class SqlProjectRepository:
             )
         )
 
-    def add_project(self, name: str, schema_name: str, class_names: tuple[str, ...]) -> Project:
-        project = ProjectModel(name=name)
+    def add_project(
+        self,
+        name: str,
+        schema_name: str,
+        class_names: tuple[str, ...],
+        *,
+        project_id: str | None = None,
+    ) -> Project:
+        project = ProjectModel(id=project_id, name=name) if project_id is not None else ProjectModel(name=name)
         self._session.add(project)
         self._session.flush()
         schema = ClassSchemaModel(project_id=project.id, name=schema_name, version=1, names_json=class_names)
@@ -211,6 +228,79 @@ class SqlCollectionRepository:
             )
         )
 
+    def rename(
+        self,
+        project_id: str,
+        collection_id: str,
+        name: str,
+        expected_revision: int,
+    ) -> Collection | None:
+        result = self._session.execute(
+            update(CollectionModel)
+            .where(
+                CollectionModel.project_id == project_id,
+                CollectionModel.id == collection_id,
+                CollectionModel.revision == expected_revision,
+            )
+            .values(name=name, revision=expected_revision + 1)
+        )
+        if result.rowcount != 1:
+            return None
+        return self.get(project_id, collection_id)
+
+    def bump_revision(
+        self,
+        project_id: str,
+        collection_id: str,
+        expected_revision: int,
+    ) -> Collection | None:
+        result = self._session.execute(
+            update(CollectionModel)
+            .where(
+                CollectionModel.project_id == project_id,
+                CollectionModel.id == collection_id,
+                CollectionModel.revision == expected_revision,
+            )
+            .values(revision=expected_revision + 1)
+        )
+        if result.rowcount != 1:
+            return None
+        return self.get(project_id, collection_id)
+
+    def list_members(self, project_id: str, collection_id: str) -> Sequence[str]:
+        return tuple(
+            self._session.scalars(
+                select(CollectionMemberModel.asset_id)
+                .join(CollectionModel, CollectionMemberModel.collection_id == CollectionModel.id)
+                .join(AssetModel, CollectionMemberModel.asset_id == AssetModel.id)
+                .where(
+                    CollectionModel.project_id == project_id,
+                    CollectionModel.id == collection_id,
+                    AssetModel.project_id == project_id,
+                )
+                .order_by(CollectionMemberModel.asset_id)
+            )
+        )
+
+    def add_members(self, project_id: str, collection_id: str, asset_ids: Sequence[str]) -> None:
+        existing = set(self.list_members(project_id, collection_id))
+        self._session.add_all(
+            CollectionMemberModel(collection_id=collection_id, asset_id=asset_id)
+            for asset_id in asset_ids
+            if asset_id not in existing
+        )
+
+    def remove_member(self, project_id: str, collection_id: str, asset_id: str) -> None:
+        self._session.execute(
+            delete(CollectionMemberModel).where(
+                CollectionMemberModel.collection_id == collection_id,
+                CollectionMemberModel.asset_id == asset_id,
+                CollectionMemberModel.collection_id.in_(
+                    select(CollectionModel.id).where(CollectionModel.project_id == project_id)
+                ),
+            )
+        )
+
 
 class SqlImportRepository:
     def __init__(self, session: Session) -> None:
@@ -298,3 +388,152 @@ class SqlReviewTaskRepository:
         if state := getattr(filters, "state", None):
             statement = statement.where(ReviewItemModel.state == state)
         return list(self._session.scalars(statement.order_by(ReviewItemModel.rank)))
+
+    def create_from_collection(self, project_id: str, collection_id: str, sample_size: int) -> str:
+        assets = list(
+            self._session.scalars(
+                select(AssetModel)
+                .join(CollectionMemberModel, CollectionMemberModel.asset_id == AssetModel.id)
+                .join(CollectionModel, CollectionModel.id == CollectionMemberModel.collection_id)
+                .where(
+                    CollectionModel.project_id == project_id,
+                    CollectionModel.id == collection_id,
+                    AssetModel.project_id == project_id,
+                )
+                .order_by(AssetModel.id)
+                .limit(sample_size)
+            )
+        )
+        number = (
+            self._session.scalar(
+                select(func.max(ReviewRoundModel.number)).where(ReviewRoundModel.project_id == project_id)
+            )
+            or 0
+        ) + 1
+        project = self._session.scalar(select(ProjectModel).where(ProjectModel.id == project_id))
+        review_round = ReviewRoundModel(
+            project_id=project_id,
+            number=number,
+            name=f"collection review {number}",
+            source_collection_id=collection_id,
+            class_schema_id=project.class_schema_id if project is not None else None,
+            target_count=len(assets),
+            per_class=sample_size,
+        )
+        self._session.add(review_round)
+        self._session.flush()
+        self._session.add_all(
+            ReviewItemModel(
+                round_id=review_round.id,
+                image_asset_id=asset.id,
+                filename=asset.relative_path or asset.id,
+                expected_class_id=0,
+                source_status="collection",
+                selection_reason="collection",
+                split_role="review",
+                rank=rank,
+            )
+            for rank, asset in enumerate(assets, start=1)
+        )
+        return review_round.id
+
+
+class SqlExplorerRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def asset_exists(self, project_id: str, asset_id: str) -> bool:
+        return self._session.scalar(
+            select(func.count()).select_from(AssetModel).where(
+                AssetModel.project_id == project_id,
+                AssetModel.id == asset_id,
+            )
+        ) == 1
+
+    def list_resources(self, project_id: str) -> Sequence[ExplorerResource]:
+        resources: list[ExplorerResource] = []
+        source_rows = self._session.execute(
+            select(SourceRootModel, func.count(AssetModel.id))
+            .outerjoin(
+                AssetModel,
+                and_(
+                    AssetModel.source_root_id == SourceRootModel.id,
+                    AssetModel.project_id == project_id,
+                ),
+            )
+            .where(SourceRootModel.project_id == project_id)
+            .group_by(SourceRootModel.id)
+            .order_by(SourceRootModel.name)
+        )
+        resources.extend(
+            ExplorerResource(row.id, "source", row.name, count, row.status)
+            for row, count in source_rows
+        )
+        round_rows = self._session.execute(
+            select(ReviewRoundModel, func.count(ReviewItemModel.id))
+            .outerjoin(ReviewItemModel, ReviewItemModel.round_id == ReviewRoundModel.id)
+            .where(ReviewRoundModel.project_id == project_id)
+            .group_by(ReviewRoundModel.id)
+            .order_by(ReviewRoundModel.number)
+        )
+        resources.extend(
+            ExplorerResource(row.id, "review_round", row.name, count, row.status)
+            for row, count in round_rows
+        )
+        dataset_rows = self._session.execute(
+            select(DatasetVersionModel, func.count(DatasetMemberModel.id))
+            .outerjoin(DatasetMemberModel, DatasetMemberModel.dataset_version_id == DatasetVersionModel.id)
+            .where(DatasetVersionModel.project_id == project_id)
+            .group_by(DatasetVersionModel.id)
+            .order_by(DatasetVersionModel.name)
+        )
+        resources.extend(
+            ExplorerResource(row.id, "dataset", row.name, count, "ready")
+            for row, count in dataset_rows
+        )
+        resources.extend(
+            ExplorerResource(row.id, "model", row.name, 0, "ready")
+            for row in self._session.scalars(
+                select(ModelVersionModel)
+                .where(ModelVersionModel.project_id == project_id)
+                .order_by(ModelVersionModel.name)
+            )
+        )
+        inference_rows = self._session.execute(
+            select(InferenceRunModel, func.count(CandidatePredictionModel.id))
+            .outerjoin(
+                CandidatePredictionModel,
+                and_(
+                    CandidatePredictionModel.inference_run_id == InferenceRunModel.id,
+                    CandidatePredictionModel.project_id == project_id,
+                ),
+            )
+            .where(InferenceRunModel.project_id == project_id)
+            .group_by(InferenceRunModel.id)
+            .order_by(InferenceRunModel.name)
+        )
+        resources.extend(
+            ExplorerResource(row.id, "inference", row.name, count, row.status)
+            for row, count in inference_rows
+        )
+        return resources
+
+
+class SqlIdempotencyRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get(self, key: str) -> IdempotencyRecord | None:
+        model = self._session.get(IdempotencyRecordModel, key)
+        if model is None:
+            return None
+        return IdempotencyRecord(model.key, model.scope, dict(model.response_json))
+
+    def add(self, record: IdempotencyRecord) -> None:
+        self._session.add(
+            IdempotencyRecordModel(
+                key=record.key,
+                scope=record.scope,
+                response_json=record.response,
+            )
+        )
