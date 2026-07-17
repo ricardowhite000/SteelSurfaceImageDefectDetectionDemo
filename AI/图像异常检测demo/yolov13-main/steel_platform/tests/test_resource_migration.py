@@ -197,10 +197,23 @@ def test_0002_backfills_legacy_project_without_changing_review_items(
         schema = session.scalar(select(ClassSchemaModel))
         rounds = session.scalars(select(ReviewRoundModel).order_by(ReviewRoundModel.number)).all()
         assert schema is not None
-        assert schema.names_json == ["Cr", "In", "Pa", "PS", "RS", "Sc"]
+        assert schema.names_json == ("Cr", "In", "Pa", "PS", "RS", "Sc")
         assert [row.name for row in rounds] == ["首轮主动学习", "第二轮质量抽查"]
         assert [row.target_count for row in rounds] == [1, 1]
         assert all(row.class_schema_id == schema.id for row in rounds)
+
+
+def test_class_schema_names_reload_as_an_immutable_tuple(
+    legacy_database: LegacyDatabase,
+) -> None:
+    upgrade_database(legacy_database.url)
+
+    with Session(make_engine(legacy_database.url)) as session:
+        schema = session.scalar(select(ClassSchemaModel))
+        assert schema is not None
+        assert schema.names_json == ("Cr", "In", "Pa", "PS", "RS", "Sc")
+        with pytest.raises(AttributeError):
+            schema.names_json.append("Other")  # type: ignore[attr-defined]
 
 
 def test_source_roots_allow_same_kind_with_different_names(legacy_database: LegacyDatabase) -> None:

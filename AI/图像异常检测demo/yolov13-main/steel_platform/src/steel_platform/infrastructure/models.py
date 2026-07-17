@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 
 def new_id() -> str:
@@ -18,6 +19,31 @@ def utc_now() -> datetime:
 
 class Base(DeclarativeBase):
     pass
+
+
+class StringTupleJSON(TypeDecorator[tuple[str, ...]]):
+    """Store an ordered string tuple as JSON without exposing a mutable list."""
+
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: tuple[str, ...] | list[str] | None,
+        _dialect: Any,
+    ) -> list[str] | None:
+        if value is None:
+            return None
+        return list(value)
+
+    def process_result_value(
+        self,
+        value: list[str] | tuple[str, ...] | None,
+        _dialect: Any,
+    ) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        return tuple(value)
 
 
 class ProjectModel(Base):
@@ -36,7 +62,7 @@ class ClassSchemaModel(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
-    names_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    names_json: Mapped[tuple[str, ...]] = mapped_column(StringTupleJSON(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     __table_args__ = (
         UniqueConstraint("project_id", "name", "version", name="uq_class_schema_version"),
