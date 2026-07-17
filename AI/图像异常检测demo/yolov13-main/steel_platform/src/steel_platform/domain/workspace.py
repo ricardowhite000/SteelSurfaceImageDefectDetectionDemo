@@ -36,7 +36,9 @@ class ClassSchema:
     names: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if not self.names or len(set(self.names)) != len(self.names):
+        names = tuple(self.names)
+        object.__setattr__(self, "names", names)
+        if not names or len(set(names)) != len(names):
             raise ValueError("class names must be non-empty and unique")
 
     def class_name(self, class_id: int) -> str:
