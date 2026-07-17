@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import ast
 from hashlib import sha256
 import io
 from pathlib import Path
@@ -11,6 +12,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from steel_platform.application.errors import ApplicationError, NotFoundError
+from steel_platform.application.explorer import ExplorerService
 from steel_platform.application.imports import (
     DataSourceImportService,
     ImportHashMismatch,
@@ -19,6 +21,7 @@ from steel_platform.application.imports import (
 )
 from steel_platform.application.projects import CreateProjectCommand, ProjectCatalogService
 from steel_platform.domain.workspace import ImportEntryStatus, ImportStatus, SourceMode, SourceStatus
+from steel_platform.domain.workspace import normalize_relative_path
 from steel_platform.infrastructure.artifacts import LocalArtifactStore
 from steel_platform.infrastructure.directory_picker import (
     LocalFolderReader,
@@ -187,8 +190,9 @@ def test_external_scan_occurs_after_source_and_session_registration(
     class RegisteredFolder(LocalFolderReader):
         def scan(self, locator: str) -> tuple[ManifestEntry, ...]:
             with uow_factory() as uow:
-                assert len(uow.sources.list(project_ids[0])) == 1
-                assert len(uow.imports.list_sessions(project_ids[0])) == 1
+                sessions = uow.imports.list_sessions(project_ids[0])
+                assert len(sessions) == 1
+                assert uow.sources.get(project_ids[0], sessions[0].data_source_id) is not None
             return super().scan(locator)
 
     service = DataSourceImportService(
@@ -261,6 +265,9 @@ def test_upload_hash_mismatch_does_not_verify_entry(
     current = import_service.get_import(project_ids[0], session.id)
     assert current.status is ImportStatus.UPLOADING
     assert current.entries[0].status is ImportEntryStatus.PLANNED
+    tree = ExplorerService(import_service.uow_factory).tree(project_ids[0])
+    assert next(group for group in tree["groups"] if group["id"] == "sources")["children"] == []
+    assert next(group for group in tree["groups"] if group["id"] == "collections")["children"] == []
 
 
 def test_commit_requires_key_binds_payload_and_replays_atomically(
@@ -407,3 +414,208 @@ def test_repository_persists_verified_manifest_metadata(
         assert row.actual_sha256 == row.expected_sha256
         assert row.storage_key is not None
         assert row.status == "verified"
+
+
+@pytest.mark.parametrize("value", [".", "./", "a/..", "a/../"])
+def test_relative_path_rejects_values_normalized_to_root(value: str) -> None:
+    with pytest.raises(ValueError, match="relative path"):
+        normalize_relative_path(value)
+
+
+def test_external_manifest_rejects_forged_metadata_and_nonexistent_paths(
+    import_service: DataSourceImportService,
+    tmp_path: Path,
+    project_ids: tuple[str, str],
+) -> None:
+    root = _build_image_folder(tmp_path / "untrusted-manifest")
+    session = import_service.start(project_ids[0], "untrusted", SourceMode.EXTERNAL, root)
+    actual = LocalFolderReader().scan(root.as_posix())
+    forged = [
+        ManifestEntry(entry.relative_path, entry.size_bytes + 1, entry.media_type, "f" * 64)
+        for entry in actual
+    ]
+
+    with pytest.raises(SourceManifestMismatch):
+        import_service.register_manifest(project_ids[0], session.id, forged)
+    with pytest.raises(SourceManifestMismatch):
+        import_service.register_manifest(
+            project_ids[0],
+            session.id,
+            (*actual, ManifestEntry("missing.bmp", 1, "image/bmp", "0" * 64)),
+        )
+
+    assert import_service.get_import(project_ids[0], session.id).entries == ()
+
+
+def test_external_validate_and_commit_rescan_server_manifest(
+    import_service: DataSourceImportService,
+    tmp_path: Path,
+    project_ids: tuple[str, str],
+    session_factory: sessionmaker[Session],
+) -> None:
+    validate_root = _build_image_folder(tmp_path / "changed-before-validate")
+    validating = import_service.start(project_ids[0], "validate-rescan", SourceMode.EXTERNAL, validate_root)
+    validate_manifest = LocalFolderReader().scan(validate_root.as_posix())
+    import_service.register_manifest(project_ids[0], validating.id, validate_manifest)
+    (validate_root / "Cr_1.bmp").write_bytes(b"BM-mutated")
+    with pytest.raises(SourceManifestMismatch):
+        import_service.validate(project_ids[0], validating.id)
+
+    commit_root = _build_image_folder(tmp_path / "changed-before-commit")
+    committing = import_service.start(project_ids[0], "commit-rescan", SourceMode.EXTERNAL, commit_root)
+    commit_manifest = LocalFolderReader().scan(commit_root.as_posix())
+    import_service.register_manifest(project_ids[0], committing.id, commit_manifest)
+    import_service.validate(project_ids[0], committing.id)
+    (commit_root / "Cr_1.bmp").write_bytes(b"BM-mutated")
+    with pytest.raises(SourceManifestMismatch):
+        import_service.commit(project_ids[0], committing.id, idempotency_key="changed-before-commit")
+
+    with session_factory() as db:
+        assert db.scalar(select(func.count()).select_from(AssetModel)) == 0
+
+
+def test_external_asset_read_verifies_same_handle_and_marks_changed_source(
+    import_service: DataSourceImportService,
+    tmp_path: Path,
+    project_ids: tuple[str, str],
+) -> None:
+    root = _build_image_folder(tmp_path / "read-time-verification")
+    run = import_service.import_external(
+        project_ids[0], "verified-read", root, idempotency_key="verified-read"
+    )
+    (root / "Cr_1.bmp").write_bytes(b"BM-bad")
+
+    matching_asset = next(
+        asset_id
+        for asset_id in run.asset_ids
+        if import_service.get_asset(project_ids[0], asset_id).relative_path == "Cr_1.bmp"
+    )
+    with pytest.raises(ApplicationError) as changed:
+        import_service.open_asset(project_ids[0], matching_asset)
+    assert changed.value.code == "source_changed"
+    assert import_service.get_source(project_ids[0], run.source_id).status is SourceStatus.CHANGED
+
+
+def test_external_asset_read_reports_offline_and_marks_missing_source(
+    import_service: DataSourceImportService,
+    tmp_path: Path,
+    project_ids: tuple[str, str],
+) -> None:
+    root = _build_image_folder(tmp_path / "offline-read")
+    run = import_service.import_external(
+        project_ids[0], "offline-read", root, idempotency_key="offline-read"
+    )
+    shutil.rmtree(root)
+
+    with pytest.raises(ApplicationError) as offline:
+        import_service.open_asset(project_ids[0], run.asset_ids[0])
+    assert offline.value.code == "source_offline"
+    assert import_service.get_source(project_ids[0], run.source_id).status is SourceStatus.MISSING
+
+
+def test_staging_source_and_collection_remain_hidden_until_success(
+    import_service: DataSourceImportService,
+    project_ids: tuple[str, str],
+) -> None:
+    explorer = ExplorerService(import_service.uow_factory)
+    staged = import_service.start(project_ids[0], "hidden-staging", SourceMode.MANAGED)
+    before = explorer.tree(project_ids[0])
+    assert next(group for group in before["groups"] if group["id"] == "sources")["children"] == []
+    assert next(group for group in before["groups"] if group["id"] == "collections")["children"] == []
+
+    import_service.cancel(project_ids[0], staged.id)
+    cancelled = explorer.tree(project_ids[0])
+    assert next(group for group in cancelled["groups"] if group["id"] == "sources")["children"] == []
+    assert next(group for group in cancelled["groups"] if group["id"] == "collections")["children"] == []
+
+
+def test_failed_scan_or_validation_leaves_only_hidden_staging_resources(
+    import_service: DataSourceImportService,
+    tmp_path: Path,
+    project_ids: tuple[str, str],
+) -> None:
+    empty = tmp_path / "empty-source"
+    empty.mkdir()
+    with pytest.raises(ApplicationError) as failure:
+        import_service.import_external(
+            project_ids[0], "failed-empty", empty, idempotency_key="failed-empty"
+        )
+    assert failure.value.code == "validation_error"
+
+    tree = ExplorerService(import_service.uow_factory).tree(project_ids[0])
+    assert next(group for group in tree["groups"] if group["id"] == "sources")["children"] == []
+    assert next(group for group in tree["groups"] if group["id"] == "collections")["children"] == []
+
+
+def test_successful_commit_reveals_source_and_collection_atomically(
+    import_service: DataSourceImportService,
+    tmp_path: Path,
+    project_ids: tuple[str, str],
+) -> None:
+    root = _build_image_folder(tmp_path / "visible-after-success")
+    run = import_service.import_managed(
+        project_ids[0], "visible", root, idempotency_key="visible-after-success"
+    )
+    tree = ExplorerService(import_service.uow_factory).tree(project_ids[0])
+    sources = next(group for group in tree["groups"] if group["id"] == "sources")["children"]
+    collections = next(group for group in tree["groups"] if group["id"] == "collections")["children"]
+    assert [node["id"] for node in sources] == [run.source_id]
+    assert [node["id"] for node in collections] == [run.collection_id]
+
+
+def test_rebind_rejects_mutation_between_complete_scans(
+    tmp_path: Path,
+    uow_factory: Callable[[], SqlAlchemyUnitOfWork],
+    project_ids: tuple[str, str],
+) -> None:
+    class MutatingReader(LocalFolderReader):
+        mutate_after_next_scan = False
+
+        def scan(self, locator: str) -> tuple[ManifestEntry, ...]:
+            result = super().scan(locator)
+            if self.mutate_after_next_scan:
+                self.mutate_after_next_scan = False
+                (Path(locator) / "Cr_1.bmp").write_bytes(b"changed-between-scans")
+            return result
+
+    reader = MutatingReader()
+    service = DataSourceImportService(
+        uow_factory,
+        LocalArtifactStore(tmp_path / "double-scan-artifacts"),
+        reader,
+    )
+    old = _build_image_folder(tmp_path / "double-scan-old")
+    run = service.import_external(project_ids[0], "double-scan", old, idempotency_key="double-scan")
+    moved = tmp_path / "double-scan-moved"
+    shutil.copytree(old, moved)
+    original = service.get_source(project_ids[0], run.source_id)
+    reader.mutate_after_next_scan = True
+
+    with pytest.raises(SourceManifestMismatch):
+        service.rebind(project_ids[0], run.source_id, moved)
+
+    assert service.get_source(project_ids[0], run.source_id) == original
+
+
+def test_local_folder_reader_opens_resolved_validated_target_and_exposes_verified_read() -> None:
+    source = (
+        Path(__file__).parents[1] / "src/steel_platform/infrastructure/directory_picker.py"
+    ).read_text(encoding="utf-8")
+    assert 'with resolved.open("rb") as stream:' in source
+    assert 'stream = candidate.open("rb")' not in source
+    assert 'stream = resolved.open("rb")' in source
+    assert 'with candidate.open("rb") as stream:' not in source
+    assert "def open_verified(" in source
+
+
+def test_import_application_service_depends_only_on_ports_and_standard_library() -> None:
+    path = Path(__file__).parents[1] / "src/steel_platform/application/imports.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    imported_roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_roots.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_roots.add(node.module.split(".")[0])
+    assert {"sqlalchemy", "fastapi", "pathlib", "os"}.isdisjoint(imported_roots)
+    assert "LocalArtifactStore" not in path.read_text(encoding="utf-8")

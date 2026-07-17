@@ -6,7 +6,12 @@ import mimetypes
 from pathlib import Path
 from typing import BinaryIO
 
-from steel_platform.domain.workspace import ManifestEntry, normalize_relative_path
+from steel_platform.domain.workspace import (
+    ManifestEntry,
+    SourceContentChanged,
+    SourceUnavailable,
+    normalize_relative_path,
+)
 
 
 class UnavailableDirectoryPicker:
@@ -52,7 +57,7 @@ class LocalFolderReader:
             relative_path = normalize_relative_path(candidate.relative_to(root).as_posix())
             digest = sha256()
             size_bytes = 0
-            with candidate.open("rb") as stream:
+            with resolved.open("rb") as stream:
                 while chunk := stream.read(1024 * 1024):
                     digest.update(chunk)
                     size_bytes += len(chunk)
@@ -61,9 +66,39 @@ class LocalFolderReader:
         return tuple(entries)
 
     def open_readonly(self, locator: str, relative_path: str) -> BinaryIO:
+        return self._resolve_file(locator, relative_path).open("rb")
+
+    def open_verified(
+        self,
+        locator: str,
+        relative_path: str,
+        *,
+        expected_sha256: str,
+        expected_size_bytes: int,
+    ) -> BinaryIO:
+        try:
+            resolved = self._resolve_file(locator, relative_path)
+            stream = resolved.open("rb")
+        except (FileNotFoundError, OSError) as exc:
+            raise SourceUnavailable(relative_path) from exc
+        try:
+            digest = sha256()
+            size_bytes = 0
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+                size_bytes += len(chunk)
+            if size_bytes != expected_size_bytes or digest.hexdigest() != expected_sha256:
+                raise SourceContentChanged(relative_path)
+            stream.seek(0)
+            return stream
+        except BaseException:
+            stream.close()
+            raise
+
+    def _resolve_file(self, locator: str, relative_path: str) -> Path:
         normalized = normalize_relative_path(relative_path)
         root = Path(self.canonicalize(locator))
-        candidate = (root / Path(normalized)).resolve(strict=True)
-        if root not in candidate.parents or not candidate.is_file():
+        resolved = (root / Path(normalized)).resolve(strict=True)
+        if root not in resolved.parents or not resolved.is_file():
             raise ValueError("source file escapes the registered root")
-        return candidate.open("rb")
+        return resolved

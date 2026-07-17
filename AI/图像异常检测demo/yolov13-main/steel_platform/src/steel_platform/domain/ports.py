@@ -70,6 +70,14 @@ class DataSourceRepository(Protocol):
         manifest_sha256: str,
         expected_revision: int,
     ) -> DataSource | None: ...
+    def update_status(
+        self,
+        project_id: str,
+        data_source_id: str,
+        *,
+        status: str,
+        expected_revision: int,
+    ) -> DataSource | None: ...
 
 
 class CollectionRepository(Protocol):
@@ -162,6 +170,14 @@ class FolderReader(Protocol):
     def canonicalize(self, locator: str) -> str: ...
     def scan(self, locator: str) -> Sequence[ManifestEntry]: ...
     def open_readonly(self, locator: str, relative_path: str) -> BinaryIO: ...
+    def open_verified(
+        self,
+        locator: str,
+        relative_path: str,
+        *,
+        expected_sha256: str,
+        expected_size_bytes: int,
+    ) -> BinaryIO: ...
 
 
 class UnitOfWork(AbstractContextManager, Protocol):

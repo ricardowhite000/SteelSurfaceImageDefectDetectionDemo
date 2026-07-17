@@ -180,7 +180,10 @@ class SqlDataSourceRepository:
             _source(model)
             for model in self._session.scalars(
                 select(SourceRootModel)
-                .where(SourceRootModel.project_id == project_id)
+                .where(
+                    SourceRootModel.project_id == project_id,
+                    SourceRootModel.status != SourceStatus.IMPORTING.value,
+                )
                 .order_by(SourceRootModel.name)
             )
         ]
@@ -240,6 +243,27 @@ class SqlDataSourceRepository:
             return None
         return self.get(project_id, data_source_id)
 
+    def update_status(
+        self,
+        project_id: str,
+        data_source_id: str,
+        *,
+        status: str,
+        expected_revision: int,
+    ) -> DataSource | None:
+        result = self._session.execute(
+            update(SourceRootModel)
+            .where(
+                SourceRootModel.project_id == project_id,
+                SourceRootModel.id == data_source_id,
+                SourceRootModel.revision == expected_revision,
+            )
+            .values(status=status, revision=expected_revision + 1)
+        )
+        if result.rowcount != 1:
+            return None
+        return self.get(project_id, data_source_id)
+
 
 class SqlCollectionRepository:
     def __init__(self, session: Session) -> None:
@@ -256,7 +280,17 @@ class SqlCollectionRepository:
 
     def list(self, project_id: str, *, parent_id: str | None = None) -> Sequence[Collection]:
         statement: Select[tuple[CollectionModel]] = (
-            select(CollectionModel).where(CollectionModel.project_id == project_id).order_by(CollectionModel.name)
+            select(CollectionModel)
+            .where(
+                CollectionModel.project_id == project_id,
+                ~select(ImportSessionModel.id)
+                .where(
+                    ImportSessionModel.collection_id == CollectionModel.id,
+                    ImportSessionModel.status != ImportStatus.SUCCEEDED.value,
+                )
+                .exists(),
+            )
+            .order_by(CollectionModel.name)
         )
         if parent_id is not None:
             statement = statement.where(CollectionModel.parent_id == parent_id)
@@ -638,6 +672,7 @@ class SqlExplorerRepository:
                 ),
             )
             .where(SourceRootModel.project_id == project_id)
+            .where(SourceRootModel.status != SourceStatus.IMPORTING.value)
             .group_by(SourceRootModel.id)
             .order_by(SourceRootModel.name)
         )

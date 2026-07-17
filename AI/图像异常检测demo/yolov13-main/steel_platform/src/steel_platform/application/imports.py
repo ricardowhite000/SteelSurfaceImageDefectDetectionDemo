@@ -22,7 +22,9 @@ from steel_platform.domain.workspace import (
     ImportStatus,
     ManifestEntry,
     SourceMode,
+    SourceContentChanged,
     SourceStatus,
+    SourceUnavailable,
 )
 
 __all__ = [
@@ -124,7 +126,7 @@ class DataSourceImportService:
                     name=normalized_name,
                     mode=mode,
                     root_path=root_path,
-                    status=SourceStatus.AVAILABLE,
+                    status=SourceStatus.IMPORTING,
                     revision=0,
                 ),
             )
@@ -152,8 +154,13 @@ class DataSourceImportService:
             session = self._require_session(uow, project_id, import_id)
             self._require_state(session, (ImportStatus.PLANNED, ImportStatus.SCANNING, ImportStatus.UPLOADING))
             source = self._require_source(uow, project_id, session.data_source_id)
+            authoritative = normalized
+            if source.mode is SourceMode.EXTERNAL:
+                authoritative = self._scan_external(source)
+                if _manifest_signature(normalized) != _manifest_signature(authoritative):
+                    raise SourceManifestMismatch()
             registered: list[ImportEntry] = []
-            for candidate in normalized:
+            for candidate in authoritative:
                 current = uow.imports.find_entry(project_id, import_id, candidate.relative_path)
                 if current is not None:
                     if (
@@ -244,6 +251,11 @@ class DataSourceImportService:
                     "Every manifest entry must be verified before validation",
                     status_code=409,
                 )
+            source = self._require_source(uow, project_id, session.data_source_id)
+            if source.mode is SourceMode.EXTERNAL:
+                scanned = self._scan_external(source)
+                if _manifest_signature(entries) != _manifest_signature(scanned):
+                    raise SourceManifestMismatch()
             ready = uow.imports.transition_session(
                 project_id,
                 import_id,
@@ -269,6 +281,10 @@ class DataSourceImportService:
                 if not entries or any(entry.status is not ImportEntryStatus.VERIFIED for entry in entries):
                     raise ApplicationError("import_not_verified", "Import is not verified", status_code=409)
                 source = self._require_source(uow, project_id, session.data_source_id)
+                if source.mode is SourceMode.EXTERNAL:
+                    scanned = self._scan_external(source)
+                    if _manifest_signature(entries) != _manifest_signature(scanned):
+                        raise SourceManifestMismatch()
                 if uow.collections.get(project_id, session.collection_id) is None:
                     raise NotFoundError("Import collection was not found")
                 uow.idempotency.reserve(IdempotencyRecord(key, scope, {}))
@@ -361,7 +377,8 @@ class DataSourceImportService:
                 raise ApplicationError("invalid_source_mode", "Managed sources cannot be rebound", status_code=409)
             expected_revision = source.revision
         root_path = self.folders.canonicalize(str(locator))
-        candidate = tuple(self.folders.scan(root_path))
+        first_candidate = tuple(self.folders.scan(root_path))
+        second_candidate = tuple(self.folders.scan(root_path))
         with self.uow_factory() as uow:
             current = self._require_source(uow, project_id, source_id)
             if current.revision != expected_revision:
@@ -370,15 +387,20 @@ class DataSourceImportService:
             expected = tuple(
                 sorted((asset.relative_path, asset.size_bytes, asset.sha256) for asset in assets)
             )
-            actual = tuple(sorted((entry.relative_path, entry.size_bytes, entry.sha256) for entry in candidate))
-            if not expected or actual != expected:
+            first_actual = tuple(
+                sorted((entry.relative_path, entry.size_bytes, entry.sha256) for entry in first_candidate)
+            )
+            second_actual = tuple(
+                sorted((entry.relative_path, entry.size_bytes, entry.sha256) for entry in second_candidate)
+            )
+            if not expected or first_actual != expected or second_actual != expected or first_actual != second_actual:
                 raise SourceManifestMismatch()
             rebound = uow.sources.update_binding(
                 project_id,
                 source_id,
                 root_path=root_path,
                 status=SourceStatus.AVAILABLE.value,
-                manifest_sha256=_manifest_sha256(candidate),
+                manifest_sha256=_manifest_sha256(second_candidate),
                 expected_revision=expected_revision,
             )
             if rebound is None:
@@ -395,6 +417,13 @@ class DataSourceImportService:
         with self.uow_factory() as uow:
             return self._require_source(uow, project_id, source_id)
 
+    def get_asset(self, project_id: str, asset_id: str) -> Asset:
+        with self.uow_factory() as uow:
+            asset = uow.assets.get(project_id, asset_id)
+            if asset is None:
+                raise NotFoundError("Asset was not found")
+            return asset
+
     def open_asset(self, project_id: str, asset_id: str) -> BinaryIO:
         with self.uow_factory() as uow:
             asset = uow.assets.get(project_id, asset_id)
@@ -406,8 +435,17 @@ class DataSourceImportService:
                 raise ApplicationError("artifact_missing", "Managed asset has no storage key", status_code=500)
             return self.artifacts.open(asset.storage_key)
         try:
-            return self.folders.open_readonly(source.root_path, asset.relative_path)
-        except (FileNotFoundError, OSError, ValueError) as exc:
+            return self.folders.open_verified(
+                source.root_path,
+                asset.relative_path,
+                expected_sha256=asset.sha256,
+                expected_size_bytes=asset.size_bytes,
+            )
+        except SourceContentChanged as exc:
+            self._mark_source_status(project_id, source, SourceStatus.CHANGED)
+            raise ApplicationError("source_changed", "External source content has changed", status_code=409) from exc
+        except (SourceUnavailable, FileNotFoundError, OSError, ValueError) as exc:
+            self._mark_source_status(project_id, source, SourceStatus.MISSING)
             raise ApplicationError("source_offline", "External source is unavailable", status_code=409) from exc
 
     def import_managed(
@@ -449,6 +487,31 @@ class DataSourceImportService:
         with self.uow_factory() as uow:
             if uow.projects.get(project_id) is None:
                 raise NotFoundError("Project was not found")
+
+    def _scan_external(self, source: DataSource) -> tuple[ManifestEntry, ...]:
+        try:
+            return tuple(self.folders.scan(source.root_path))
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            raise ApplicationError("source_offline", "External source is unavailable", status_code=409) from exc
+
+    def _mark_source_status(
+        self,
+        project_id: str,
+        observed: DataSource,
+        status: SourceStatus,
+    ) -> None:
+        with self.uow_factory() as uow:
+            current = uow.sources.get(project_id, observed.id)
+            if current is None or current.status is status:
+                return
+            changed = uow.sources.update_status(
+                project_id,
+                current.id,
+                status=status.value,
+                expected_revision=current.revision,
+            )
+            if changed is not None:
+                uow.commit()
 
     @staticmethod
     def _require_session(uow: UnitOfWork, project_id: str, import_id: str) -> ImportSession:
@@ -540,3 +603,18 @@ def _manifest_sha256(entries: Sequence[ImportEntry | ManifestEntry]) -> str:
     ]
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return sha256(encoded).hexdigest()
+
+
+def _manifest_signature(
+    entries: Sequence[ImportEntry | ManifestEntry],
+) -> tuple[tuple[str, int, str | None], ...]:
+    return tuple(
+        sorted(
+            (
+                entry.relative_path,
+                entry.size_bytes,
+                entry.actual_sha256 if isinstance(entry, ImportEntry) else entry.sha256,
+            )
+            for entry in entries
+        )
+    )

@@ -11,6 +11,7 @@ class SourceMode(StrEnum):
 
 
 class SourceStatus(StrEnum):
+    IMPORTING = "importing"
     AVAILABLE = "available"
     MISSING = "missing"
     UNREADABLE = "unreadable"
@@ -178,8 +179,23 @@ class ConcurrentAllocationError(RuntimeError):
     pass
 
 
+class SourceContentChanged(RuntimeError):
+    pass
+
+
+class SourceUnavailable(RuntimeError):
+    pass
+
+
 def normalize_relative_path(value: str) -> str:
     candidate = PurePosixPath(value.replace("\\", "/"))
-    if not value or candidate.is_absolute() or ":" in candidate.parts[0] or ".." in candidate.parts:
+    if (
+        not value
+        or not candidate.parts
+        or candidate.as_posix() == "."
+        or candidate.is_absolute()
+        or ":" in candidate.parts[0]
+        or ".." in candidate.parts
+    ):
         raise ValueError("path must be a non-empty relative path")
     return candidate.as_posix()
