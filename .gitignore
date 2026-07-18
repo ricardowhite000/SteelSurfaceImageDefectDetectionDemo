@@ -1,10 +1,89 @@
+# -----------------------------------------------------------------------------
+# Operating systems, editors and local agent state
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
 .idea/
+.vscode/
+.agents/
+.codex/
 .superpowers/
+docs/superpowers/
+
+# -----------------------------------------------------------------------------
+# Python caches, environments, coverage and packaging outputs
+# -----------------------------------------------------------------------------
 **/__pycache__/
 *.py[cod]
 **/.pytest_cache/
+**/.hypothesis/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+**/htmlcov/
+**/*.egg-info/
+**/build/
+**/dist/
+.venv/
+venv/
+env/
 
-AI/图像异常检测demo/yolov13-main/steel_platform/config/platform.local.yaml
-AI/图像异常检测demo/yolov13-main/steel_platform/artifacts/
-AI/图像异常检测demo/yolov13-main/steel_platform/workspace/
+# -----------------------------------------------------------------------------
+# Node.js and local document-processing tool caches
+# -----------------------------------------------------------------------------
+**/node_modules/
+**/.codex_sheet_work/
 
+# -----------------------------------------------------------------------------
+# Temporary files and local environment configuration
+# -----------------------------------------------------------------------------
+**/.tmp-*/
+*.tmp
+*.temp
+~$*
+**/.env
+**/.env.*
+!**/.env.example
+AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/config/platform.local.yaml
+
+# -----------------------------------------------------------------------------
+# Protected datasets and platform runtime state
+# -----------------------------------------------------------------------------
+AI/ImageDefectDetectionDemo/data/
+AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/artifacts/
+AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/workspace/
+AI/ImageDefectDetectionDemo/yolov13-main/runs/
+AI/ImageDefectDetectionDemo/yolov13-main/outputs/
+AI/ImageDefectDetectionDemo/saved_models/
+
+# -----------------------------------------------------------------------------
+# Databases, logs and backups
+# -----------------------------------------------------------------------------
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+**/backups/
+
+# -----------------------------------------------------------------------------
+# Model weights and generated inference media
+# Keep these in local/object storage; publish selected releases separately.
+# -----------------------------------------------------------------------------
+*.pt
+*.pth
+*.onnx
+*.engine
+*.trt
+*.avi
+*.mp4
+*.webm
+*.mov
+*.mkv
+
+# -----------------------------------------------------------------------------
+# Unrelated legacy/local workspaces
+# -----------------------------------------------------------------------------
+AI/internship_yolo/

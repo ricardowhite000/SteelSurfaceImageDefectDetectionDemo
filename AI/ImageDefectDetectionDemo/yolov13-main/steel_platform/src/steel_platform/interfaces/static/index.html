@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>钢材视觉平台</title>
+  <link rel="stylesheet" href="/static/styles.css?v=__STATIC_VERSION__">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#files" aria-label="钢材视觉平台首页"><span class="logo">钢</span><span><strong>钢材视觉平台</strong><small>本地数据与模型工作台</small></span></a>
+    <nav aria-label="主导航">
+      <a class="nav active" href="#files" data-node-target="sources">文件</a>
+      <a class="nav" href="#review" data-node-target="review-rounds">复核</a>
+      <a class="nav" href="#runs" data-node-target="inference">运行</a>
+      <a class="nav" href="#workbench">模型工作台</a>
+    </nav>
+    <label class="project-picker" for="projectSelector">项目
+      <select id="projectSelector" aria-label="选择项目"><option>正在加载项目…</option></select>
+    </label>
+  </header>
+
+  <main id="files" class="file-workspace">
+    <aside class="resource-pane" aria-label="项目资源">
+      <div class="pane-title"><div class="pane-title-copy"><small>项目资源</small><h1 id="projectName">请选择项目</h1></div><button id="refreshExplorer" class="icon-button" type="button" title="刷新资源" aria-label="刷新资源">↻</button></div>
+      <div id="resourceTree" class="resource-tree" role="tree" aria-label="资源目录树"></div>
+    </aside>
+
+    <section id="assetPane" class="asset-pane" aria-labelledby="assetHeading">
+      <nav id="resourceBreadcrumb" class="breadcrumb" aria-label="当前位置">文件</nav>
+      <div class="asset-toolbar">
+        <div class="asset-title"><p class="eyebrow">当前内容</p><h2 id="assetHeading">项目资源</h2><p id="assetSummary" class="muted">请从左侧选择资源。</p></div>
+        <button id="openImport" class="primary" type="button">导入文件</button>
+      </div>
+      <div class="resource-controls" aria-label="文件工具栏">
+        <label class="search-box"><span class="sr-only">搜索文件</span><input id="resourceSearch" type="search" placeholder="搜索文件" autocomplete="off"></label>
+        <label>排序 <select id="resourceSort"><option value="name">名称</option><option value="created_at">创建时间</option><option value="size">大小</option><option value="status">状态</option></select></label>
+        <button id="resourceOrder" type="button" title="切换排序方向">升序</button>
+        <span class="view-switch" role="group" aria-label="视图模式"><button id="gridView" type="button" aria-label="网格视图">网格</button><button id="listView" type="button" aria-label="列表视图">列表</button></span>
+        <button id="refreshResource" type="button">刷新</button>
+      </div>
+      <div id="resourceContent" class="resource-content" aria-live="polite"><div class="empty-state">请选择一个具体资源以查看文件。</div></div>
+      <nav id="resourcePager" class="resource-pager" aria-label="文件分页"></nav>
+    </section>
+  </main>
+
+  <main id="assetDetailView" class="subpage hidden" aria-live="polite">
+    <div class="subpage-bar"><button id="backToFiles" type="button">← 返回文件</button><nav id="detailBreadcrumb" class="breadcrumb" aria-label="图片位置"></nav></div>
+    <p id="assetDetailMessage" class="message" role="status"></p>
+    <div class="asset-detail-layout">
+      <section class="detail-preview-panel"><div id="detailCanvasStage" class="detail-canvas-stage"><canvas id="assetDetailCanvas" aria-label="带检测框的图片预览"></canvas></div></section>
+      <aside class="detail-sidebar"><p class="eyebrow">图片详情</p><h1 id="detailFilename">正在加载…</h1><button id="sendAssetToWorkbench" class="primary detail-workbench-action" type="button">使用此图片创建推理任务</button><label for="overlaySelector">检测框版本</label><select id="overlaySelector"></select><p class="overlay-hint">此页面只读；请在复核页面修改标签。</p><dl id="assetDetailMeta" class="detail-list"></dl></aside>
+    </div>
+  </main>
+
+  <main id="reviewWorkspace" class="review-workspace hidden" aria-live="polite">
+    <section id="reviewRouteError" class="review-route-error hidden"><h1>无法打开复核任务</h1><p>复核地址必须同时包含项目与任务编号。</p><a class="primary" href="#review">返回任务列表</a></section>
+    <section id="reviewApp" class="hidden">
+      <header class="review-header"><div><p class="eyebrow">任务复核工作区</p><h1 id="reviewTitle">复核工作区</h1><p id="reviewPosition" class="muted">正在加载任务…</p></div><div><span id="dirtyBadge" class="dirty-badge hidden">未保存</span><button id="queueToggle" type="button">队列（Q）</button></div></header>
+      <p id="reviewMessage" class="message" role="status"></p>
+      <div class="review-layout">
+        <aside id="reviewQueue" class="review-queue"><h2>当前队列</h2><div id="reviewQueueList"></div></aside>
+        <section class="canvas-panel"><div class="canvas-tools"><button id="newBoxBtn" type="button">新建框（R）</button><button id="undoBtn" type="button">撤销</button><button id="redoBtn" type="button">重做</button><button id="deleteBtn" type="button">删除</button><button id="resetViewBtn" type="button">适应画布</button></div><div class="canvas-stage"><canvas id="reviewCanvas" aria-label="标注画布"></canvas><p id="emptyCanvas" class="muted">选择一张待复核图片以开始。</p></div></section>
+        <aside class="review-sidebar"><h2 id="reviewFilename">尚未选择图片</h2><dl id="reviewMeta" class="detail-list"></dl><label for="reviewNote">备注</label><textarea id="reviewNote" rows="5" placeholder="排除时必须说明原因"></textarea><div class="decision-actions"><button id="acceptBtn" type="button">接受（A）</button><button id="saveBtn" type="button">修正（S）</button><button id="doubtBtn" type="button">存疑（D）</button><button id="excludeBtn" type="button">排除（X）</button></div></aside>
+      </div>
+    </section>
+    <section id="reviewCompletion" class="review-completion hidden"><p class="eyebrow">本轮已完成</p><h1>本轮复核已完成</h1><div id="completionStats" class="count-grid"></div><p><a id="reviewReportLink" href="#review">查看本轮报告</a> · <a href="#review">返回任务列表</a></p></section>
+  </main>
+
+  <main id="reviewReportView" class="subpage report-page hidden" aria-live="polite">
+    <div class="subpage-bar"><button id="backToReview" type="button">← 返回复核</button><nav id="reportBreadcrumb" class="breadcrumb">复核 / 报告</nav></div>
+    <p id="reviewReportMessage" class="message" role="status"></p>
+    <section id="reviewReportContent"></section>
+  </main>
+
+  <main id="modelWorkbench" class="workbench-page hidden" aria-live="polite">
+    <header class="workbench-hero">
+      <div><p class="eyebrow">YOLO 人工工作流</p><h1>模型工作台</h1><p class="muted">选择已登记的数据与模型，检查平台生成的命令，再由人工确认并在 PowerShell 中执行。</p></div>
+      <button id="workbenchRefresh" type="button">刷新工作台</button>
+    </header>
+    <nav class="workbench-tabs" aria-label="模型工作台功能">
+      <button id="workbenchNewTraining" class="active" type="button" data-workbench-tab="training">新建训练</button>
+      <button id="workbenchNewInference" type="button" data-workbench-tab="inference">新建推理</button>
+      <button id="workbenchJobCenter" type="button" data-workbench-tab="jobs">任务中心</button>
+      <button id="workbenchModelLibrary" type="button" data-workbench-tab="models">模型库</button>
+    </nav>
+    <p id="workbenchMessage" class="message" role="status"></p>
+
+    <section id="workbenchTrainingPanel" class="workbench-panel">
+      <div class="workbench-panel-head"><div><h2>创建训练或评估任务</h2><p>任务在准备前仍可修改；生成命令后会冻结本次输入和参数快照。</p></div></div>
+      <form id="trainingJobForm" class="workbench-form">
+        <label>任务名称<input id="trainingJobName" required maxlength="200" value="YOLOv13 冒烟训练"></label>
+        <label>任务类型<select id="trainingJobKind"><option value="train">训练</option><option value="evaluate">评估</option></select></label>
+        <label>任务预设<select id="trainingPreset"><option value="smoke">冒烟训练（1轮）</option><option value="formal">正式训练（100轮）</option></select></label>
+        <label>数据集<select id="trainingDataset" required></select></label>
+        <label>父模型 / 待评估模型<select id="trainingModel" required></select></label>
+        <label>设备<select id="trainingDevice"></select></label>
+        <details class="workbench-advanced"><summary>高级参数</summary><div class="parameter-grid">
+          <label>训练轮数<input id="trainingEpochs" type="number" min="1" max="500" value="1"></label>
+          <label>图像尺寸<input id="trainingImageSize" type="number" min="320" max="1536" step="32" value="640"></label>
+          <label>批大小<input id="trainingBatch" type="number" min="1" max="64" value="4"></label>
+          <label>早停耐心<input id="trainingPatience" type="number" min="0" max="200" value="20"></label>
+          <label>工作进程<input id="trainingWorkers" type="number" min="0" max="8" value="0"></label>
+        </div></details>
+        <button class="primary" type="submit">创建草稿任务</button>
+      </form>
+    </section>
+
+    <section id="workbenchInferencePanel" class="workbench-panel hidden">
+      <div class="workbench-panel-head"><div><h2>创建流式推理任务</h2><p>图片集合与视频固定 batch=1，并以流式方式处理，避免显存随文件总量持续增长。</p></div></div>
+      <form id="inferenceJobForm" class="workbench-form">
+        <label>任务名称<input id="inferenceJobName" required maxlength="200" value="钢板图片推理"></label>
+        <label>预设<select id="inferencePreset"><option value="visual">常规推理</option><option value="pseudo_label">辅助标注</option><option value="video">视频推理</option></select></label>
+        <label>检测模型<select id="inferenceModel" required></select></label>
+        <label>来源类型<select id="inferenceSourceType"><option value="source">已登记数据源 / 图片文件夹</option><option value="asset">单张图片或视频资产</option></select></label>
+        <label id="inferenceSourceSelectLabel">数据来源<select id="inferenceSource"></select></label>
+        <label id="inferenceAssetLabel" class="hidden">图片或视频文件<input id="inferenceSourceFile" type="file" accept="image/*,video/*"><span class="muted">也可在下方填写已有资产编号</span><input id="inferenceAssetId" placeholder="已有图片或视频资产编号"></label>
+        <label>设备<select id="inferenceDevice"></select></label>
+        <label>置信度<input id="inferenceConfidence" type="number" min="0.01" max="0.99" step="0.01" value="0.25"></label>
+        <label>图像尺寸<input id="inferenceImageSize" type="number" min="320" max="1536" step="32" value="640"></label>
+        <button class="primary" type="submit">创建草稿任务</button>
+      </form>
+    </section>
+
+    <section id="workbenchJobsPanel" class="workbench-panel hidden">
+      <div class="workbench-panel-head"><div><h2>任务中心</h2><p>跟踪任务状态、运行日志、输入血缘和结果产物。</p></div><button id="refreshJobs" type="button">刷新任务</button></div>
+      <div class="job-center-layout">
+        <div id="workbenchJobList" class="workbench-list"><div class="empty-state">暂无任务。</div></div>
+        <article id="workbenchJobDetail" class="job-detail">
+          <div class="empty-state">选择一项任务查看命令、日志与结果。</div>
+        </article>
+      </div>
+      <section class="command-panel"><div class="command-head"><h3>命令预览</h3><div><button id="copyWorkbenchCommand" type="button" disabled>复制命令</button><button id="launchWorkbenchTerminal" class="primary" type="button" disabled>打开 PowerShell</button></div></div><pre id="workbenchCommandPreview">尚未选择已准备的任务。</pre></section>
+      <section class="workbench-output-grid">
+        <div><div class="command-head"><h3>实时日志</h3><button id="cancelWorkbenchJob" type="button" disabled>取消任务</button></div><pre id="workbenchLog">暂无日志。</pre></div>
+        <div><div class="command-head"><h3>结果视图</h3><button id="ingestWorkbenchResults" type="button" disabled>重新导入结果</button></div><div id="workbenchResults" class="workbench-results"><p class="muted">任务成功后在此显示曲线和产物。</p></div></div>
+      </section>
+    </section>
+
+    <section id="workbenchModelsPanel" class="workbench-panel hidden">
+      <div class="workbench-panel-head"><div><h2>模型库</h2><p>区分基础迁移权重、已验证缺陷检测器和仅归档 ONNX。</p></div><button id="refreshModels" type="button">刷新模型</button></div>
+      <div id="workbenchModelList" class="table-wrap"></div>
+      <details class="model-import"><summary>登记已导入平台的模型文件</summary><form id="modelImportForm" class="workbench-form compact">
+        <label>模型名称<input id="modelImportName" required maxlength="200"></label>
+        <label>选择模型文件<input id="modelImportFile" type="file" accept=".pt,.onnx"></label>
+        <label>已有文件资产编号（可选）<input id="modelImportAssetId" placeholder="不重新上传时填写资产编号"></label>
+        <label>格式<select id="modelImportFormat"><option value="pt">PyTorch（.pt）</option><option value="onnx">ONNX（仅归档）</option></select></label>
+        <label>用途<select id="modelImportPurpose"><option value="base_weight">基础权重</option><option value="detector">缺陷检测器</option></select></label>
+        <label>来源说明<input id="modelImportNote" placeholder="例如：合作方提供"></label>
+        <button class="primary" type="submit">登记模型</button>
+      </form></details>
+    </section>
+  </main>
+
+  <dialog id="importWizard" class="import-wizard" aria-labelledby="importTitle">
+    <form method="dialog" class="wizard-shell">
+      <div class="wizard-head"><div><p class="eyebrow">项目文件导入</p><h2 id="importTitle">导入文件</h2></div><button id="closeImport" class="icon-button" value="cancel" aria-label="关闭导入窗口">×</button></div>
+      <ol class="wizard-steps" aria-label="导入步骤"><li data-step="1" class="active">1. 选择文件夹</li><li data-step="2">2. 扫描预览</li><li data-step="3">3. 存储方式</li><li data-step="4">4. 校验</li><li data-step="5">5. 提交</li></ol>
+      <section class="wizard-page" data-page="1"><h3>选择文件夹</h3><p>选择本地目录。系统只向导入任务发送相对文件名和所选文件内容。</p><label class="file-input"><span>选择文件夹</span><input id="importFolder" type="file" webkitdirectory directory multiple></label><p id="folderName" class="muted">尚未选择文件夹。</p></section>
+      <section class="wizard-page hidden" data-page="2"><h3>扫描预览</h3><p>创建导入任务前，请先核对浏览器扫描结果。</p><dl id="scanCounts" class="count-grid"></dl></section>
+      <section class="wizard-page hidden" data-page="3"><h3>选择存储方式</h3><label class="mode-card"><input type="radio" name="importMode" value="managed" checked><span><strong>平台托管</strong><small>将所选文件复制到平台管理的资产目录。</small></span></label><label class="mode-card is-disabled"><input type="radio" name="importMode" value="external" disabled><span><strong>外部只读（仅命令行）</strong><small>外部模式需要服务端可访问的路径，请使用命令行导入。</small></span></label></section>
+      <section class="wizard-page hidden" data-page="4"><h3>校验</h3><p id="validationMessage">系统将创建项目隔离的导入任务并校验清单。</p><dl id="validationCounts" class="count-grid"></dl></section>
+      <section class="wizard-page hidden" data-page="5"><h3>提交导入</h3><p id="commitMessage">校验通过后才能提交。</p></section>
+      <p id="importMessage" class="message" role="status"></p>
+      <footer class="wizard-actions"><button id="wizardBack" type="button">上一步</button><button id="wizardNext" class="primary" type="button">下一步</button></footer>
+    </form>
+  </dialog>
+
+  <script>
+    (() => {
+      const showBootFailure = (detail) => {
+        if (window.__steelPlatformStarted) return;
+        const message = `钢材视觉平台前端未能启动：${detail || "浏览器没有执行应用模块"}`;
+        const selector = document.getElementById("projectSelector");
+        const tree = document.getElementById("resourceTree");
+        const summary = document.getElementById("assetSummary");
+        const importButton = document.getElementById("openImport");
+        if (selector) { selector.innerHTML = '<option value="">前端启动失败</option>'; selector.disabled = true; }
+        if (tree) tree.textContent = message;
+        if (summary) summary.textContent = `${message}。请使用当前版本的 Chrome 或 Edge，并重新启动平台服务。`;
+        if (importButton) importButton.disabled = true;
+      };
+      window.addEventListener("error", (event) => showBootFailure(event.message));
+      window.addEventListener("unhandledrejection", (event) => showBootFailure(event.reason?.message || String(event.reason || "未知错误")));
+      window.setTimeout(() => showBootFailure("应用模块加载超时"), 4000);
+    })();
+  </script>
+  <script type="module" src="/static/js/main.js?v=__STATIC_VERSION__"></script>
+</body>
+</html>

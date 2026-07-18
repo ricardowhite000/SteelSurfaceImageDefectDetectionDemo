@@ -1,0 +1,20 @@
+# Copy this file to platform.local.yaml, then set paths for this machine.
+# Relative paths are resolved from this config file's directory.
+project_name: steel-demo
+database_url: sqlite:///platform.db
+artifact_root: artifacts
+source_images: ../workspace/images
+candidate_labels: ../workspace/candidate-labels
+review_csv: ../workspace/pseudo_review.csv
+seed_manifest: ../workspace/seed_manifest.csv
+seed_dataset: ../workspace/seed_dataset
+classes: [Cr, In, Pa, PS, RS, Sc]
+host: 127.0.0.1
+port: 8765
+seed: 42
+per_class: 30
+validation_per_class: 10
+yolo_python: python
+yolo_project_root: ../yolov13-main
+parent_weights: null
+device: "0"
