@@ -16,6 +16,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from steel_platform.application.errors import ApplicationError, NotFoundError
 from steel_platform.domain.ports import AnnotationCodec, ArtifactStore, UnitOfWork
 from steel_platform.domain.workspace import ExplorerResource, ResourceItem
+from steel_platform.infrastructure.yolo import repair_yolo_rounding_text
 
 
 ResourceType = Literal["source", "collection", "review_round", "dataset", "model", "inference"]
@@ -53,6 +54,8 @@ class OverlaySetView:
     created_at: datetime | None
     sha256: str
     boxes: tuple[dict[str, int | float], ...]
+    validation_status: str = "valid"
+    validation_message: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,13 +168,22 @@ class ResourceBrowserService:
             raise ApplicationError("invalid_image", "图片损坏或无法读取", status_code=422) from exc
         overlays: list[OverlaySetView] = []
         for revision in revisions:
+            validation_status = "valid"
+            validation_message: str | None = None
             try:
                 with self._artifacts.open(revision.storage_key) as stream:
-                    boxes = self._codec.decode(stream.read())
+                    content = stream.read()
+                boxes = self._codec.decode(content)
             except (OSError, ValueError, UnicodeError) as exc:
-                raise ApplicationError(
-                    "invalid_annotation", f"标注版本 {revision.id} 无法解析", status_code=422
-                ) from exc
+                boxes = ()
+                validation_message = str(exc)
+                try:
+                    repair_yolo_rounding_text(
+                        content.decode("utf-8-sig"), source=Path(f"<{revision.id}>")
+                    )
+                    validation_status = "repairable"
+                except (UnboundLocalError, OSError, ValueError, UnicodeError):
+                    validation_status = "invalid"
             overlays.append(
                 OverlaySetView(
                     id=revision.id,
@@ -182,6 +194,8 @@ class ResourceBrowserService:
                     created_at=revision.created_at,
                     sha256=revision.sha256,
                     boxes=tuple(asdict(box) for box in boxes),
+                    validation_status=validation_status,
+                    validation_message=validation_message,
                 )
             )
         selected = item.context_revision_id

@@ -175,7 +175,7 @@ def test_fresh_upgrade_creates_explicit_resource_schema(tmp_path: Path) -> None:
         "target_count",
         "completed_at",
     } <= {column["name"] for column in inspector.get_columns("review_rounds")}
-    assert database_version(database_url) == ("0003_model_workbench", "0003_model_workbench")
+    assert database_version(database_url) == ("0005_portable_workspace", "0005_portable_workspace")
 
 
 def test_0002_backfills_legacy_project_without_changing_review_items(
@@ -253,7 +253,7 @@ def test_downgrade_is_rehearsed_on_a_copy_only(legacy_database: LegacyDatabase, 
     copied_tables = set(inspect(make_engine(copied_url)).get_table_names())
     assert "class_schemas" not in copied_tables
     assert database_version(copied_url)[0] == "0001_initial"
-    assert database_version(legacy_database.url)[0] == "0003_model_workbench"
+    assert database_version(legacy_database.url)[0] == "0005_portable_workspace"
     assert legacy_database.snapshot_counts() == LegacyCounts(
         assets=1,
         asset_ids=("asset-1",),

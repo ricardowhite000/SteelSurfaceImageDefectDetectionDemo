@@ -104,6 +104,7 @@ class WorkbenchJobSpec:
     preset: str
     input_refs: tuple[JobInputRef, ...]
     parameters: Mapping[str, object]
+    runtime_profile_id: str | None = None
 
     @classmethod
     def create(
@@ -114,6 +115,7 @@ class WorkbenchJobSpec:
         input_refs: tuple[JobInputRef, ...],
         parameters: Mapping[str, object],
         allowed_devices: tuple[str, ...],
+        runtime_profile_id: str | None = None,
     ) -> "WorkbenchJobSpec":
         defaults = _DEFAULTS.get((kind, preset))
         if defaults is None:
@@ -125,7 +127,14 @@ class WorkbenchJobSpec:
         normalized.setdefault("device", allowed_devices[0] if allowed_devices else "cpu")
         _validate_inputs(kind, input_refs)
         _validate_parameters(kind, normalized, allowed_devices)
-        return cls(kind, preset, input_refs, MappingProxyType(normalized))
+        normalized_profile_id = runtime_profile_id.strip() if runtime_profile_id else None
+        return cls(
+            kind,
+            preset,
+            input_refs,
+            MappingProxyType(normalized),
+            normalized_profile_id,
+        )
 
 
 def _validate_inputs(kind: JobKind, refs: tuple[JobInputRef, ...]) -> None:

@@ -59,6 +59,7 @@ class Project:
     name: str
     class_schema_id: str
     revision: int
+    annotation_policy: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

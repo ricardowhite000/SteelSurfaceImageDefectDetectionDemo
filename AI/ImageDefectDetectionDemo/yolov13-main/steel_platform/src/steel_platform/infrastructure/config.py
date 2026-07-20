@@ -33,9 +33,10 @@ class PlatformSettings(BaseModel):
     @field_validator("classes")
     @classmethod
     def validate_classes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if len(value) != 6 or len(set(value)) != 6:
-            raise ValueError("必须配置六个不重复类别")
-        return value
+        normalized = tuple(name.strip() for name in value)
+        if not normalized or any(not name for name in normalized) or len(set(normalized)) != len(normalized):
+            raise ValueError("必须配置至少一个非空且不重复的类别")
+        return normalized
 
     @property
     def database_path(self) -> Path:
@@ -50,6 +51,21 @@ def load_settings(path: Path) -> PlatformSettings:
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError("配置文件根节点必须是对象")
+    # New portable layout: the committed project file contains business rules,
+    # while the ignored machine file contains paths and execution capabilities.
+    if raw.get("project_config") or raw.get("machine_config"):
+        merged: dict[str, object] = {}
+        for key in ("project_config", "machine_config"):
+            reference = raw.get(key)
+            if not reference:
+                continue
+            referenced_path = (config_path.parent / str(reference)).resolve()
+            fragment = yaml.safe_load(referenced_path.read_text(encoding="utf-8"))
+            if not isinstance(fragment, dict):
+                raise ValueError(f"配置片段根节点必须是对象：{referenced_path}")
+            merged.update(fragment)
+        merged.update({key: value for key, value in raw.items() if key not in {"project_config", "machine_config"}})
+        raw = merged
     environment_overrides = {
         "database_url": "STEEL_PLATFORM_DATABASE_URL",
         "artifact_root": "STEEL_PLATFORM_ARTIFACT_ROOT",

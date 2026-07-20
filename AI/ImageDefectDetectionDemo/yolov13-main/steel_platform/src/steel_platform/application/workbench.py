@@ -46,6 +46,7 @@ class WorkbenchService:
         preset: str,
         input_refs: Sequence[Mapping[str, object]],
         parameters: Mapping[str, object],
+        runtime_profile_id: str | None = None,
     ) -> dict[str, object]:
         clean_name = name.strip()
         if not clean_name or len(clean_name) > 200:
@@ -69,6 +70,7 @@ class WorkbenchService:
                 ),
                 parameters=parameters,
                 allowed_devices=self.allowed_devices,
+                runtime_profile_id=runtime_profile_id,
             )
         except (ValueError, TypeError) as exc:
             raise ApplicationError("invalid_job_spec", str(exc), status_code=422) from exc
@@ -82,6 +84,7 @@ class WorkbenchService:
         expected_revision: int,
         name: str,
         parameters: Mapping[str, object],
+        runtime_profile_id: str | None = None,
     ) -> dict[str, object]:
         current = self.gateway.get_job(project_id, job_id)
         clean_name = name.strip()
@@ -106,6 +109,11 @@ class WorkbenchService:
                 ),
                 parameters=parameters,
                 allowed_devices=self.allowed_devices,
+                runtime_profile_id=runtime_profile_id or (
+                    str(current["runtime_profile_id"])
+                    if current.get("runtime_profile_id")
+                    else None
+                ),
             )
         except (ValueError, TypeError) as exc:
             raise ApplicationError("invalid_job_spec", str(exc), status_code=422) from exc

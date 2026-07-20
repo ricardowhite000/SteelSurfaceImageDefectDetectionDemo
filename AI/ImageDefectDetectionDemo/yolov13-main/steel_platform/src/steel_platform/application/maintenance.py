@@ -17,7 +17,7 @@ import yaml
 from steel_platform.infrastructure.config import PlatformSettings
 from steel_platform.infrastructure.database import make_engine
 from steel_platform.infrastructure.artifacts import ArtifactRef, LocalArtifactStore
-from steel_platform.infrastructure.models import AnnotationRevisionModel, AssetModel, CandidatePredictionModel, DatasetVersionModel, DomainEventModel, InferenceRunModel, JobModel, ModelVersionModel, OutboxEventModel, ReviewItemModel, ReviewRoundModel, SourceRootModel
+from steel_platform.infrastructure.models import AnnotationRevisionCheckModel, AnnotationRevisionModel, AssetModel, CandidatePredictionModel, DatasetVersionModel, DomainEventModel, InferenceRunModel, JobModel, ModelVersionModel, OutboxEventModel, ReviewItemModel, ReviewRoundModel, SourceRootModel, utc_now
 from steel_platform.infrastructure.yolo import parse_yolo_text, repair_yolo_rounding_text
 
 
@@ -298,6 +298,154 @@ def repair_review_rounding(
             session.add(OutboxEventModel(domain_event_id=event.id))
             report["repaired"] = int(report["repaired"]) + 1
         if apply:
+            session.commit()
+        else:
+            session.rollback()
+    return report
+
+
+def audit_annotation_revisions(settings: PlatformSettings) -> dict[str, object]:
+    """Audit every immutable annotation revision without changing its content."""
+    store = LocalArtifactStore(settings.artifact_root)
+    report: dict[str, object] = {
+        "scanned": 0,
+        "valid": 0,
+        "repairable": 0,
+        "invalid": 0,
+        "problems": [],
+    }
+    problems: list[dict[str, str]] = report["problems"]  # type: ignore[assignment]
+    with Session(make_engine(settings.database_url)) as session:
+        revisions = session.scalars(
+            select(AnnotationRevisionModel).order_by(
+                AnnotationRevisionModel.project_id,
+                AnnotationRevisionModel.created_at,
+                AnnotationRevisionModel.id,
+            )
+        ).all()
+        for revision in revisions:
+            report["scanned"] = int(report["scanned"]) + 1
+            try:
+                with store.open(revision.storage_key) as stream:
+                    text = stream.read().decode("utf-8-sig")
+                parse_yolo_text(text, source=Path(f"<{revision.id}>"))
+                status, code, message = "valid", None, None
+                report["valid"] = int(report["valid"]) + 1
+            except (OSError, UnicodeError, ValueError) as strict_error:
+                try:
+                    repair_yolo_rounding_text(text, source=Path(f"<{revision.id}>"))
+                    status, code, message = "repairable", "rounding_overflow", str(strict_error)
+                    report["repairable"] = int(report["repairable"]) + 1
+                except (UnboundLocalError, OSError, UnicodeError, ValueError) as repair_error:
+                    status, code, message = "invalid", "invalid_annotation", f"{strict_error}; {repair_error}"
+                    report["invalid"] = int(report["invalid"]) + 1
+                problems.append(
+                    {"revision_id": revision.id, "status": status, "message": message or ""}
+                )
+            check = session.get(AnnotationRevisionCheckModel, revision.id)
+            if check is None:
+                check = AnnotationRevisionCheckModel(revision_id=revision.id, status=status)
+                session.add(check)
+            check.status = status
+            check.error_code = code
+            check.message = message
+            check.checked_at = utc_now()
+        session.commit()
+    return report
+
+
+def repair_annotation_rounding(
+    settings: PlatformSettings,
+    *,
+    apply: bool = False,
+    create_backup_first: bool = True,
+) -> dict[str, object]:
+    """Create canonical child revisions for all safely repairable labels."""
+    if apply and create_backup_first:
+        create_backup(settings)
+    audit_annotation_revisions(settings)
+    store = LocalArtifactStore(settings.artifact_root)
+    report: dict[str, object] = {
+        "repairable": 0,
+        "repaired": 0,
+        "already_repaired": 0,
+        "unresolved": [],
+    }
+    with Session(make_engine(settings.database_url)) as session:
+        checks = session.scalars(
+            select(AnnotationRevisionCheckModel).where(
+                AnnotationRevisionCheckModel.status.in_(("repairable", "repaired"))
+            )
+        ).all()
+        for check in checks:
+            revision = session.get(AnnotationRevisionModel, check.revision_id)
+            if revision is None:
+                continue
+            existing = session.scalar(
+                select(AnnotationRevisionModel).where(
+                    AnnotationRevisionModel.parent_id == revision.id,
+                    AnnotationRevisionModel.origin == "system",
+                    AnnotationRevisionModel.decision == "normalized_rounding",
+                )
+            )
+            if existing is not None:
+                check.status = "repaired"
+                check.repaired_by_revision_id = existing.id
+                report["already_repaired"] = int(report["already_repaired"]) + 1
+                continue
+            report["repairable"] = int(report["repairable"]) + 1
+            if not apply:
+                continue
+            try:
+                with store.open(revision.storage_key) as stream:
+                    text = stream.read().decode("utf-8-sig")
+                repaired_text, boxes = repair_yolo_rounding_text(
+                    text, source=Path(f"<{revision.id}>")
+                )
+            except (OSError, UnicodeError, ValueError) as exc:
+                report["unresolved"].append(
+                    {"revision_id": revision.id, "message": str(exc)}
+                )
+                continue
+            ref = store.put_bytes(repaired_text.encode("utf-8"), media_type="text/yolo")
+            child = AnnotationRevisionModel(
+                project_id=revision.project_id,
+                image_asset_id=revision.image_asset_id,
+                parent_id=revision.id,
+                origin="system",
+                decision="normalized_rounding",
+                storage_key=ref.storage_key,
+                sha256=ref.sha256,
+                box_count=len(boxes),
+                created_by="system-maintenance",
+            )
+            session.add(child)
+            session.flush()
+            check.status = "repaired"
+            check.repaired_by_revision_id = child.id
+            check.checked_at = utc_now()
+            session.add(
+                DomainEventModel(
+                    project_id=revision.project_id,
+                    event_type="annotation.rounding_repaired",
+                    payload_json={
+                        "old_revision_id": revision.id,
+                        "new_revision_id": child.id,
+                    },
+                )
+            )
+            report["repaired"] = int(report["repaired"]) + 1
+        if apply:
+            session.flush()
+            events = session.scalars(
+                select(DomainEventModel).where(
+                    DomainEventModel.event_type == "annotation.rounding_repaired",
+                    ~select(OutboxEventModel.id)
+                    .where(OutboxEventModel.domain_event_id == DomainEventModel.id)
+                    .exists(),
+                )
+            ).all()
+            session.add_all(OutboxEventModel(domain_event_id=event.id) for event in events)
             session.commit()
         else:
             session.rollback()

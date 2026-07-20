@@ -1,0 +1,9 @@
+spring:
+  application.name: steel-business-service
+  profiles.default: dev
+  jpa:
+    open-in-view: false
+    hibernate.ddl-auto: validate
+  flyway.enabled: true
+management.endpoints.web.exposure.include: health,info
+server.port: ${STEEL_BUSINESS_PORT:8081}

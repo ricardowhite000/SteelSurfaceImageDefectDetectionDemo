@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: ${STEEL_MYSQL_URL:jdbc:mysql://127.0.0.1:3306/steel_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${STEEL_MYSQL_USER:steel}
+    password: ${STEEL_MYSQL_PASSWORD:steel}

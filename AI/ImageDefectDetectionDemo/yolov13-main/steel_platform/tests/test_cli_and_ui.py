@@ -115,7 +115,7 @@ def test_every_frontend_module_import_uses_the_same_content_version(tmp_path: Pa
             parent = module_url.split("?", 1)[0].rsplit("/", 1)[0]
             pending.append(f"{parent}/{relative_import[2:]}")
 
-    assert len(visited) == 11
+    assert len(visited) == 13
 
 
 def test_favicon_request_is_harmless(tmp_path: Path) -> None:
@@ -153,10 +153,10 @@ def test_primary_navigation_targets_real_project_resources(tmp_path: Path) -> No
     html = client.get("/").text
     main_js = client.get("/static/js/main.js").text
 
-    assert 'href="#files" data-node-target="sources"' in html
-    assert 'href="#review" data-node-target="review-rounds"' in html
-    assert 'href="#runs" data-node-target="inference"' in html
-    assert 'href="#workbench"' in html
+    assert 'href="#data" data-node-target="sources"' in html
+    assert 'href="#annotation"' in html
+    assert 'href="#model"' in html
+    assert 'href="#monitoring"' in html
     assert "activatePrimaryNavigation" in main_js
 
 
@@ -186,6 +186,8 @@ def test_model_workbench_exposes_manual_yolo_workflow(tmp_path: Path) -> None:
         "workbenchCommandPreview",
         "workbenchLog",
         "workbenchResults",
+        "trainingRuntimeProfile",
+        "inferenceRuntimeProfile",
     ):
         assert f'id="{element_id}"' in html
     assert "模型工作台" in html
@@ -200,6 +202,16 @@ def test_model_workbench_exposes_manual_yolo_workflow(tmp_path: Path) -> None:
     assert 'download="${escapeHtml(file.download_name)}"' in source
     assert 'video/webm' in source
     assert "当前格式不能在浏览器内播放" in source
+    assert "runtime_profile_id" in source
+    assert "options.runtime_profiles" in source
+
+
+def test_windows_delivery_scripts_use_utf8_bom_for_powershell_51() -> None:
+    scripts = Path(__file__).parents[1] / "scripts"
+    powershell_files = sorted(scripts.glob("*.ps1"))
+    assert powershell_files
+    for script in powershell_files:
+        assert script.read_bytes().startswith(b"\xef\xbb\xbf"), script.name
 
 
 def test_browser_folder_import_cannot_create_unresolvable_external_source(tmp_path: Path) -> None:

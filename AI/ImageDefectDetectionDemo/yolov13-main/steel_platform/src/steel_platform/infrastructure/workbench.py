@@ -31,6 +31,7 @@ from steel_platform.infrastructure.models import (
     SourceRootModel,
     utc_now,
 )
+from steel_platform.infrastructure.runtime_profiles import RuntimeProfileStore
 from steel_platform.infrastructure.workbench_executor import TerminalLauncher, WindowsPowerShellLauncher
 
 
@@ -40,11 +41,15 @@ class SqlWorkbenchGateway:
         settings: PlatformSettings,
         artifact_store: LocalArtifactStore,
         terminal_launcher: TerminalLauncher | None = None,
+        runtime_profiles: RuntimeProfileStore | None = None,
     ) -> None:
         self.settings = settings
         self.store = artifact_store
         self.engine = make_engine(settings.database_url)
         self.terminal_launcher = terminal_launcher or WindowsPowerShellLauncher()
+        self.runtime_profiles = runtime_profiles or RuntimeProfileStore(
+            settings.artifact_root / "machine" / "runtime-profiles.json"
+        )
 
     def options(self, project_id: str) -> dict[str, object]:
         with Session(self.engine) as session:
@@ -65,6 +70,7 @@ class SqlWorkbenchGateway:
                 .order_by(SourceRootModel.kind, SourceRootModel.name, SourceRootModel.id)
             ).all()
             return {
+                "runtime_profiles": self.runtime_profiles.list(),
                 "datasets": [
                     {
                         "id": row.id,
@@ -277,6 +283,9 @@ class SqlWorkbenchGateway:
     ) -> dict[str, object]:
         with Session(self.engine) as session:
             self._require_project(session, project_id)
+            self._validate_runtime_profile(
+                spec.runtime_profile_id, spec.parameters.get("device")
+            )
             verified_refs = [self._verify_ref(session, project_id, ref) for ref in spec.input_refs]
             if spec.kind in {JobKind.INFER, JobKind.EVALUATE}:
                 model_ref = next(ref for ref in spec.input_refs if ref.role == "model")
@@ -295,6 +304,7 @@ class SqlWorkbenchGateway:
                     "kind": spec.kind.value,
                     "preset": spec.preset,
                     "parameters": dict(spec.parameters),
+                    "runtime_profile_id": spec.runtime_profile_id,
                     "input_refs": [
                         {"role": ref.role, "ref_type": ref.ref_type, "ref_id": ref.ref_id}
                         for ref, _ in verified_refs
@@ -335,11 +345,13 @@ class SqlWorkbenchGateway:
                 raise ApplicationError("job_not_editable", "只有草稿任务可以修改参数", status_code=409)
             for ref in spec.input_refs:
                 self._verify_ref(session, project_id, ref)
+            self._validate_runtime_profile(spec.runtime_profile_id, spec.parameters.get("device"))
             job.name = name
             job.spec_json = {
                 "kind": spec.kind.value,
                 "preset": spec.preset,
                 "parameters": dict(spec.parameters),
+                "runtime_profile_id": spec.runtime_profile_id,
                 "input_refs": [
                     {"role": ref.role, "ref_type": ref.ref_type, "ref_id": ref.ref_id}
                     for ref in spec.input_refs
@@ -588,7 +600,7 @@ class SqlWorkbenchGateway:
     ) -> tuple[list[str], Path, Path, list[str]]:
         refs = {row["role"]: row for row in job.spec_json["input_refs"]}
         parameters = job.spec_json["parameters"]
-        root = self.settings.yolo_project_root or Path(__file__).resolve().parents[4]
+        python_executable, root = self._execution_environment(job)
         workspace = self.settings.artifact_root / "workbench" / "jobs" / job.id
         output = workspace / "output"
         if job.kind == JobKind.TRAIN.value:
@@ -599,7 +611,7 @@ class SqlWorkbenchGateway:
                 raise ApplicationError("dataset_materialization_missing", "数据集缺少data.yaml", status_code=422)
             weights = self._materialize_weights(model, workspace)
             arguments = [
-                self.settings.yolo_python,
+                python_executable,
                 str(root / "steel_tutorial" / "05_train.py"),
                 "--data", str(data_yaml),
                 "--weights", str(weights),
@@ -625,7 +637,7 @@ class SqlWorkbenchGateway:
                 raise ApplicationError("dataset_materialization_missing", "数据集缺少data.yaml", status_code=422)
             weights = self._materialize_weights(model, workspace)
             arguments = [
-                self.settings.yolo_python,
+                python_executable,
                 "-m", "steel_tutorial.06_evaluate",
                 "--data", str(data_yaml),
                 "--weights", str(weights),
@@ -693,7 +705,7 @@ class SqlWorkbenchGateway:
                     + ("\n" if assets else ""),
                 )
                 arguments = [
-                    self.settings.yolo_python,
+                    python_executable,
                     "-m", "steel_platform.interfaces.inference_runner",
                     "--source-list", str(source_list),
                     "--weights", str(weights),
@@ -711,7 +723,7 @@ class SqlWorkbenchGateway:
                 }
                 return arguments, root, output, ["pseudo_review.csv"]
             arguments = [
-                self.settings.yolo_python,
+                python_executable,
                 "-m", "steel_tutorial.07_infer",
                 "--source", str(source_path),
                 "--weights", str(weights),
@@ -729,7 +741,7 @@ class SqlWorkbenchGateway:
             model = self._require_model(session, job.project_id, str(target_model_id))
             weights = self._materialize_weights(model, workspace)
             arguments = [
-                self.settings.yolo_python,
+                python_executable,
                 "-m", "steel_platform.interfaces.model_verifier",
                 "--weights", str(weights),
                 "--output", str(output / "metadata.json"),
@@ -824,6 +836,7 @@ class SqlWorkbenchGateway:
             "name": row.name,
             "kind": row.kind,
             "preset": row.preset,
+            "runtime_profile_id": row.spec_json.get("runtime_profile_id"),
             "status": row.status,
             "revision": row.revision,
             "parameters": row.spec_json.get("parameters", {}),
@@ -848,6 +861,42 @@ class SqlWorkbenchGateway:
             "finished_at": row.finished_at.isoformat() if row.finished_at else None,
             "created_at": row.created_at.isoformat(),
         }
+
+    def _validate_runtime_profile(
+        self, profile_id: str | None, device: object
+    ) -> dict[str, object] | None:
+        if not profile_id:
+            return None
+        profile = self.runtime_profiles.get(profile_id)
+        devices = {str(item) for item in profile.get("devices") or []}
+        if str(device) not in devices:
+            raise ApplicationError(
+                "runtime_device_mismatch",
+                f"运行环境不支持设备：{device}",
+                status_code=422,
+            )
+        return profile
+
+    def _execution_environment(self, job: JobModel) -> tuple[str, Path]:
+        profile_id = job.spec_json.get("runtime_profile_id")
+        if not profile_id:
+            return (
+                self.settings.yolo_python,
+                self.settings.yolo_project_root or Path(__file__).resolve().parents[4],
+            )
+        profile = self._validate_runtime_profile(
+            str(profile_id), job.spec_json.get("parameters", {}).get("device")
+        )
+        assert profile is not None
+        executable = Path(str(profile["python_executable"]))
+        project_root = Path(str(profile["project_root"]))
+        if not executable.is_file() or not project_root.is_dir():
+            raise ApplicationError(
+                "runtime_unavailable",
+                "所选运行环境的Python解释器或YOLO项目目录不可用，请先执行运行环境检查",
+                status_code=422,
+            )
+        return str(executable), project_root
 
     def _materialize_weights(self, model: ModelVersionModel, workspace: Path) -> Path:
         suffix = ".pt" if model.format == "pt" else f".{model.format}"

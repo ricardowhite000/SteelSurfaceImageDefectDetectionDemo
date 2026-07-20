@@ -28,6 +28,7 @@ from steel_platform.domain.workspace import (
     SourceStatus,
 )
 from steel_platform.infrastructure.models import (
+    AnnotationActionModel,
     AnnotationRevisionModel,
     AssetModel,
     CandidatePredictionModel,
@@ -57,6 +58,7 @@ def _project(model: ProjectModel) -> Project:
         name=model.name,
         class_schema_id=model.class_schema_id or "",
         revision=model.revision,
+        annotation_policy=dict(model.annotation_policy_json or {}),
     )
 
 
@@ -192,6 +194,7 @@ class SqlProjectRepository:
                 name=project.name,
                 class_schema_id=project.class_schema_id or None,
                 revision=project.revision,
+                annotation_policy_json=project.annotation_policy or {},
             )
         )
 
@@ -946,6 +949,18 @@ class SqlReviewTaskRepository:
         self._session.add(event)
         self._session.flush()
         self._session.add(OutboxEventModel(domain_event_id=event.id))
+        item = self.get_item(project_id, round_id, item_id)
+        self._session.add(
+            AnnotationActionModel(
+                project_id=project_id,
+                work_order_id=round_id,
+                item_id=item_id,
+                action="decision_saved",
+                to_state=state,
+                annotation_revision_id=item.current_revision_id if item is not None else None,
+                note=item.note if item is not None else "",
+            )
+        )
 
     def create_from_collection(self, project_id: str, collection_id: str, sample_size: int) -> str:
         assets = list(

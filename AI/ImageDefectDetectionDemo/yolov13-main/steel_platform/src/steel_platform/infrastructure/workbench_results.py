@@ -29,6 +29,11 @@ from steel_platform.infrastructure.models import (
     SourceRootModel,
     utc_now,
 )
+from steel_platform.infrastructure.yolo import (
+    parse_yolo_text,
+    repair_yolo_rounding_text,
+    serialize_yolo,
+)
 
 
 def _media_type(path: Path) -> str:
@@ -361,9 +366,15 @@ def _register_inference_predictions(
                 if len(parts) >= 5:
                     normalized_lines.append(" ".join(parts[:5]))
             if normalized_lines:
+                source_text = "\n".join(normalized_lines) + "\n"
+                try:
+                    boxes = parse_yolo_text(source_text, source=label_path)
+                except ValueError:
+                    _, boxes = repair_yolo_rounding_text(source_text, source=label_path)
+                canonical_text = serialize_yolo(boxes)
                 label_ref = store.put_bytes(
-                    ("\n".join(normalized_lines) + "\n").encode("utf-8"),
-                    media_type="text/plain",
+                    canonical_text.encode("utf-8"),
+                    media_type="text/yolo",
                 )
                 revision = AnnotationRevisionModel(
                     project_id=job.project_id,
@@ -372,7 +383,7 @@ def _register_inference_predictions(
                     decision=None,
                     storage_key=label_ref.storage_key,
                     sha256=label_ref.sha256,
-                    box_count=len(normalized_lines),
+                    box_count=len(boxes),
                 )
                 session.add(revision)
                 session.flush()

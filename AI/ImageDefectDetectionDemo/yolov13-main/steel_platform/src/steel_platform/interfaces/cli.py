@@ -26,6 +26,9 @@ runs_app = typer.Typer(help="实验和推理结果导入")
 inference_app = typer.Typer(help="流式推理任务")
 backup_app = typer.Typer(help="一致性备份")
 artifacts_app = typer.Typer(help="资产校验和清理预览")
+annotations_app = typer.Typer(help="标签版本审计与安全修复")
+runtime_app = typer.Typer(help="本机YOLO运行环境档案")
+events_app = typer.Typer(help="领域事件导出与投影分发")
 source_app = typer.Typer(help="data source verification and rebinding")
 import_app = typer.Typer(help="import status")
 
@@ -41,8 +44,110 @@ for name, group in (
     ("source", source_app),
     ("import", import_app),
     ("artifacts", artifacts_app),
+    ("annotations", annotations_app),
+    ("runtime", runtime_app),
+    ("events", events_app),
 ):
     app.add_typer(group, name=name)
+
+
+def _runtime_store(settings):
+    from steel_platform.infrastructure.runtime_profiles import RuntimeProfileStore
+
+    return RuntimeProfileStore(settings.artifact_root / "machine" / "runtime-profiles.json")
+
+
+@runtime_app.command("add")
+def runtime_add(
+    name: str = typer.Option(..., "--name"),
+    python_executable: Path = typer.Option(..., "--python"),
+    project_root: Path = typer.Option(..., "--project-root"),
+    device: list[str] = typer.Option(["0"], "--device"),
+    config: Path = typer.Option(..., "--config", "-c"),
+) -> None:
+    profile = _runtime_store(_config(config)).add(
+        name=name,
+        python_executable=str(python_executable.resolve()),
+        project_root=str(project_root.resolve()),
+        devices=device,
+    )
+    typer.echo(json.dumps(profile, ensure_ascii=False, sort_keys=True))
+
+
+@runtime_app.command("list")
+def runtime_list(config: Path = typer.Option(..., "--config", "-c")) -> None:
+    typer.echo(json.dumps(_runtime_store(_config(config)).list(), ensure_ascii=False, sort_keys=True))
+
+
+@runtime_app.command("check")
+def runtime_check(
+    profile_id: str = typer.Option(..., "--profile"),
+    config: Path = typer.Option(..., "--config", "-c"),
+) -> None:
+    report = _runtime_store(_config(config)).check(profile_id)
+    typer.echo(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    if not report["available"]:
+        raise typer.Exit(2)
+
+
+@app.command("doctor")
+def doctor(config: Path = typer.Option(..., "--config", "-c")) -> None:
+    settings = _config(config)
+    current, head = database_version(settings.database_url)
+    report = {
+        "database": {"current": current, "head": head, "ready": current == head},
+        "artifact_root": {"path": str(settings.artifact_root), "available": settings.artifact_root.is_dir()},
+        "source_images": {"path": str(settings.source_images), "available": settings.source_images.is_dir()},
+        "runtime_profiles": [
+            _runtime_store(settings).check(profile["id"])
+            for profile in _runtime_store(settings).list()
+        ],
+        "listen": f"http://{settings.host}:{settings.port}",
+    }
+    typer.echo(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    if not report["database"]["ready"] or not report["artifact_root"]["available"]:
+        raise typer.Exit(2)
+
+
+@events_app.command("dispatch")
+def events_dispatch(
+    url: str = typer.Option("http://127.0.0.1:8081/internal/v1/ai-events", "--url"),
+    limit: int = typer.Option(100, "--limit", min=1, max=1000),
+    config: Path = typer.Option(..., "--config", "-c"),
+) -> None:
+    from sqlalchemy.orm import sessionmaker
+    from steel_platform.application.event_dispatch import dispatch_outbox
+
+    settings = _config(config)
+    report = dispatch_outbox(sessionmaker(bind=make_engine(settings.database_url)), url, limit=limit)
+    typer.echo(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    if report["failed"]:
+        raise typer.Exit(2)
+
+
+@annotations_app.command("audit")
+def annotations_audit(
+    config: Path = typer.Option(..., "--config", "-c"),
+) -> None:
+    from steel_platform.application.maintenance import audit_annotation_revisions
+
+    report = audit_annotation_revisions(_config(config))
+    typer.echo(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    if report["invalid"]:
+        raise typer.Exit(2)
+
+
+@annotations_app.command("repair-rounding")
+def annotations_repair_rounding(
+    dry_run: bool = typer.Option(True, "--dry-run/--apply"),
+    config: Path = typer.Option(..., "--config", "-c"),
+) -> None:
+    from steel_platform.application.maintenance import repair_annotation_rounding
+
+    report = repair_annotation_rounding(_config(config), apply=not dry_run)
+    typer.echo(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    if report["unresolved"]:
+        raise typer.Exit(2)
 
 
 def _resolve_config_path(path: Path) -> Path:

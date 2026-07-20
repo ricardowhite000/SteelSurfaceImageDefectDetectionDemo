@@ -302,7 +302,7 @@ def test_inference_ingestion_registers_inference_run(tmp_path: Path) -> None:
     )
     (output / "labels").mkdir()
     (output / "labels" / f"{Path(image_name).stem}.txt").write_text(
-        "0 0.5 0.5 0.2 0.2 0.8\n", encoding="utf-8"
+        "0 0.96497 0.506167 0.0700603 0.0381834 0.8\n", encoding="utf-8"
     )
 
     from steel_platform.infrastructure.workbench_results import ingest_job_outputs
@@ -328,3 +328,17 @@ def test_inference_ingestion_registers_inference_run(tmp_path: Path) -> None:
         assert prediction.image_asset_id == image_asset_id
         assert prediction.box_count == 1
         assert prediction.annotation_revision_id
+        revision = session.get(
+            __import__(
+                "steel_platform.infrastructure.models", fromlist=["AnnotationRevisionModel"]
+            ).AnnotationRevisionModel,
+            prediction.annotation_revision_id,
+        )
+        assert revision is not None
+        from steel_platform.infrastructure.artifacts import LocalArtifactStore
+        from steel_platform.infrastructure.yolo import YoloAnnotationCodec
+
+        with LocalArtifactStore(settings.artifact_root).open(revision.storage_key) as stream:
+            boxes = YoloAnnotationCodec().decode(stream.read())
+        assert len(boxes) == 1
+        assert boxes[0].x_center + boxes[0].width / 2 <= 1
