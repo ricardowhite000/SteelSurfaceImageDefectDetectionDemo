@@ -17,6 +17,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from steel_platform.application.errors import ApplicationError
+from steel_platform.application.annotation_work_orders import AnnotationWorkOrderService
+from steel_platform.application.portability import SourceBindingService
 from steel_platform.application.explorer import ExplorerService
 from steel_platform.application.imports import DataSourceImportService
 from steel_platform.application.projects import ProjectCatalogService
@@ -28,11 +30,12 @@ from steel_platform.infrastructure.artifacts import LocalArtifactStore
 from steel_platform.infrastructure.config import PlatformSettings
 from steel_platform.infrastructure.database import make_engine, require_current_database
 from steel_platform.infrastructure.directory_picker import LocalFolderReader
+from steel_platform.infrastructure.runtime_profiles import RuntimeProfileStore
 from steel_platform.infrastructure.uow import SqlAlchemyUnitOfWork
 from steel_platform.infrastructure.yolo import YoloAnnotationCodec
 from steel_platform.infrastructure.workbench import SqlWorkbenchGateway
 from steel_platform.infrastructure.workbench_executor import TerminalLauncher
-from steel_platform.interfaces.routes import assets, imports, projects, resources, review, workbench
+from steel_platform.interfaces.routes import annotation_work_orders, assets, imports, portability, projects, resources, review, workbench
 
 
 _ERROR_MESSAGES_ZH = {
@@ -107,6 +110,9 @@ def create_app(
     uow_factory = lambda: SqlAlchemyUnitOfWork(session_factory)
     store = LocalArtifactStore(settings.artifact_root)
     codec = YoloAnnotationCodec()
+    runtime_profiles = RuntimeProfileStore(
+        settings.artifact_root / "machine" / "runtime-profiles.json"
+    )
     import_service = DataSourceImportService(uow_factory, store, LocalFolderReader())
     app.state.services = SimpleNamespace(
         projects=ProjectCatalogService(uow_factory), explorer=ExplorerService(uow_factory),
@@ -122,8 +128,16 @@ def create_app(
         ),
         review_queries=ReviewTaskQueryService(uow_factory, class_names=settings.classes, artifact_store=store, annotation_codec=codec),
         review_decisions=ReviewDecisionService(uow_factory, artifact_store=store, annotation_codec=codec, class_names=settings.classes),
+        annotation_work_orders=AnnotationWorkOrderService(session_factory, store),
+        runtime_profiles=runtime_profiles,
+        source_bindings=SourceBindingService(session_factory, import_service),
         workbench=WorkbenchService(
-            SqlWorkbenchGateway(settings, store, terminal_launcher),
+            SqlWorkbenchGateway(
+                settings,
+                store,
+                terminal_launcher,
+                runtime_profiles=runtime_profiles,
+            ),
             allowed_devices=(settings.device,),
         ),
     )
@@ -175,9 +189,11 @@ def create_app(
     app.include_router(imports.router)
     app.include_router(review.router)
     app.include_router(review.legacy_router)
+    app.include_router(annotation_work_orders.router)
     app.include_router(assets.router)
     app.include_router(resources.router)
     app.include_router(workbench.router)
+    app.include_router(portability.router)
 
     @app.get("/static/js/{module_name:path}", include_in_schema=False)
     def javascript_module(module_name: str) -> Response:

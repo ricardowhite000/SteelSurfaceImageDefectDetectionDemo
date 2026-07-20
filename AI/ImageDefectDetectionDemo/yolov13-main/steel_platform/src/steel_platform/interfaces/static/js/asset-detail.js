@@ -43,7 +43,8 @@ function draw() {
 }
 
 function overlayLabel(overlay) {
-  return `${zh("origin", overlay.origin)} · ${zh("status", overlay.decision)} · ${overlay.box_count} 个框`;
+  const validation = overlay.validation_status === "valid" ? "" : ` · ${overlay.validation_status === "repairable" ? "可安全修复" : "版本异常"}`;
+  return `${zh("origin", overlay.origin)} · ${zh("status", overlay.decision)} · ${overlay.box_count} 个框${validation}`;
 }
 
 function renderMetadata(detail) {
@@ -55,6 +56,7 @@ function renderMetadata(detail) {
     ["来源", detail.source_name || "—"], ["资源状态", zh("status", detail.status)],
     ["创建时间", formatDate(detail.created_at)], ["SHA256", detail.sha256],
     ["当前标签", overlay ? overlayLabel(overlay) : "无可用检测框"],
+    ["标签校验", overlay?.validation_status === "valid" ? "正常" : (overlay?.validation_message || "该版本不可用于绘制")],
     ["标签哈希", overlay?.sha256 || "—"], ["父标签版本", overlay?.parent_id || "—"],
   ];
   $("assetDetailMeta").innerHTML = values.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join("");

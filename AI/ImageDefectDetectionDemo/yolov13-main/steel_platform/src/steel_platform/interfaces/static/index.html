@@ -8,12 +8,12 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#files" aria-label="钢材视觉平台首页"><span class="logo">钢</span><span><strong>钢材视觉平台</strong><small>本地数据与模型工作台</small></span></a>
+    <a class="brand" href="#data" aria-label="钢材视觉平台首页"><span class="logo">钢</span><span><strong>钢材视觉平台</strong><small>机器视觉数据闭环</small></span></a>
     <nav aria-label="主导航">
-      <a class="nav active" href="#files" data-node-target="sources">文件</a>
-      <a class="nav" href="#review" data-node-target="review-rounds">复核</a>
-      <a class="nav" href="#runs" data-node-target="inference">运行</a>
-      <a class="nav" href="#workbench">模型工作台</a>
+      <a class="nav active" href="#data" data-node-target="sources">数据中心</a>
+      <a class="nav" href="#annotation">标注中心</a>
+      <a class="nav" href="#model">模型中心</a>
+      <a class="nav" href="#monitoring">监测中心</a>
     </nav>
     <label class="project-picker" for="projectSelector">项目
       <select id="projectSelector" aria-label="选择项目"><option>正在加载项目…</option></select>
@@ -43,6 +43,31 @@
       <nav id="resourcePager" class="resource-pager" aria-label="文件分页"></nav>
     </section>
   </main>
+
+  <main id="annotationCenter" class="center-page hidden" aria-live="polite">
+    <header class="center-hero"><div><p class="eyebrow">从初始标注到专项修订</p><h1>标注中心</h1><p class="muted">创建标注工单、按模型风险筛选样本，并保留每次人工决策和标签版本。</p></div><button id="annotationRefresh" type="button">刷新工单</button></header>
+    <p id="annotationMessage" class="message" role="status"></p>
+    <div class="center-columns">
+      <section class="center-panel"><div class="panel-heading"><div><h2>标注工单</h2><p>已完成工单保持只读，需要调整时创建修订工单。</p></div><button id="openWorkOrderCreator" class="primary" type="button">创建专项工单</button></div><div id="workOrderList" class="work-order-list"><div class="empty-state">正在加载工单…</div></div></section>
+      <aside id="workOrderCreator" class="center-panel creator-panel hidden"><div class="panel-heading"><div><h2>条件筛选</h2><p>一轮工单绑定一次推理运行。</p></div><button id="closeWorkOrderCreator" type="button">关闭</button></div>
+        <form id="workOrderForm" class="work-order-form">
+          <label>工单名称<input id="workOrderName" required maxlength="200" value="低置信度专项复核"></label>
+          <label>工单类型<select id="workOrderTaskType"><option value="inference_review">机器候选复核</option><option value="manual_annotation">初始人工标注</option></select></label>
+          <label id="workOrderSourceLabel">推理运行<select id="workOrderInference" required></select></label>
+          <fieldset><legend>类别（不选表示全部）</legend><div id="workOrderClasses" class="class-checkboxes"></div></fieldset>
+          <fieldset><legend>风险条件</legend><label><input id="riskNoBox" type="checkbox">无框</label><label><input id="riskConflict" type="checkbox">类别冲突</label><label><input id="riskLowConfidence" type="checkbox" checked>低置信度</label></fieldset>
+          <label>最低置信度不高于<input id="workOrderConfidence" type="number" min="0.01" max="0.99" step="0.01" value="0.40"></label>
+          <div class="form-row"><label>最少框数<input id="workOrderMinBoxes" type="number" min="0" value="0"></label><label>最多框数<input id="workOrderMaxBoxes" type="number" min="0" placeholder="不限"></label></div>
+          <div class="form-row"><label>总样本上限<input id="workOrderLimit" type="number" min="1" value="60"></label><label>随机种子<input id="workOrderSeed" type="number" value="42"></label></div>
+          <label><input id="workOrderExcludeReviewed" type="checkbox" checked>排除已经人工复核的图片</label>
+          <div class="creator-actions"><button id="previewWorkOrder" type="button">预览匹配</button><button class="primary" type="submit">创建并冻结工单</button></div>
+        </form><div id="workOrderPreview" class="preview-box muted">请先选择推理运行并预览。</div>
+      </aside>
+    </div>
+    <dialog id="amendmentDialog" class="amendment-dialog"><form method="dialog"><div class="panel-heading"><div><h2>创建修订工单</h2><p>从历史工单选择需要再次调整的图片。</p></div><button value="cancel">关闭</button></div><label>工单名称<input id="amendmentName" maxlength="200"></label><div id="amendmentItems" class="amendment-items"></div><p id="amendmentMessage" class="message"></p><button id="createAmendment" class="primary" type="button">创建修订工单</button></form></dialog>
+  </main>
+
+  <main id="monitoringCenter" class="center-page hidden" aria-live="polite"><header class="center-hero"><div><p class="eyebrow">真实业务状态投影</p><h1>监测中心</h1><p class="muted">汇总标注、训练、模型和推理状态；实时相机与报警将在后续阶段接入。</p></div><button id="monitoringRefresh" type="button">刷新指标</button></header><p id="monitoringMessage" class="message"></p><section id="monitoringContent" class="monitoring-grid"><div class="empty-state">正在加载平台状态…</div></section></main>
 
   <main id="assetDetailView" class="subpage hidden" aria-live="polite">
     <div class="subpage-bar"><button id="backToFiles" type="button">← 返回文件</button><nav id="detailBreadcrumb" class="breadcrumb" aria-label="图片位置"></nav></div>
@@ -94,6 +119,7 @@
         <label>任务预设<select id="trainingPreset"><option value="smoke">冒烟训练（1轮）</option><option value="formal">正式训练（100轮）</option></select></label>
         <label>数据集<select id="trainingDataset" required></select></label>
         <label>父模型 / 待评估模型<select id="trainingModel" required></select></label>
+        <label>运行环境<select id="trainingRuntimeProfile"></select><span class="muted">选择本机已登记的YOLO环境；留空则兼容旧配置。</span></label>
         <label>设备<select id="trainingDevice"></select></label>
         <details class="workbench-advanced"><summary>高级参数</summary><div class="parameter-grid">
           <label>训练轮数<input id="trainingEpochs" type="number" min="1" max="500" value="1"></label>
@@ -112,6 +138,7 @@
         <label>任务名称<input id="inferenceJobName" required maxlength="200" value="钢板图片推理"></label>
         <label>预设<select id="inferencePreset"><option value="visual">常规推理</option><option value="pseudo_label">辅助标注</option><option value="video">视频推理</option></select></label>
         <label>检测模型<select id="inferenceModel" required></select></label>
+        <label>运行环境<select id="inferenceRuntimeProfile"></select><span class="muted">任务只保存逻辑环境编号，不保存到项目配置中。</span></label>
         <label>来源类型<select id="inferenceSourceType"><option value="source">已登记数据源 / 图片文件夹</option><option value="asset">单张图片或视频资产</option></select></label>
         <label id="inferenceSourceSelectLabel">数据来源<select id="inferenceSource"></select></label>
         <label id="inferenceAssetLabel" class="hidden">图片或视频文件<input id="inferenceSourceFile" type="file" accept="image/*,video/*"><span class="muted">也可在下方填写已有资产编号</span><input id="inferenceAssetId" placeholder="已有图片或视频资产编号"></label>

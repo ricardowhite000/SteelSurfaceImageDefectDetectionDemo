@@ -44,14 +44,19 @@ class AnnotationDecision:
     boxes: tuple[AnnotationBox, ...]
     note: str
     expected_revision: int
+    allow_empty_labels: bool = False
 
     def __post_init__(self) -> None:
         if self.expected_revision < 0:
             raise ValueError("expected_revision不能小于0")
-        if self.action in {ReviewState.ACCEPTED, ReviewState.CORRECTED} and not self.boxes:
-            raise ValueError("接受或修正必须包含至少一个有效框")
         if self.action == ReviewState.EXCLUDED and not self.note.strip():
             raise ValueError("排除图片必须填写原因")
         if self.action == ReviewState.PENDING:
             raise ValueError("pending不是有效的人工决策")
+        if (
+            not self.boxes
+            and self.action in {ReviewState.ACCEPTED, ReviewState.CORRECTED}
+            and not self.allow_empty_labels
+        ):
+            raise ValueError("接受或修正至少一个有效框")
 

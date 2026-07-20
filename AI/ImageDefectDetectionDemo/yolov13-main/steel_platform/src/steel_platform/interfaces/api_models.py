@@ -80,6 +80,7 @@ class JobCreatePayload(BaseModel):
     preset: str
     input_refs: list[JobInputRefPayload]
     parameters: dict[str, object] = Field(default_factory=dict)
+    runtime_profile_id: str | None = None
 
 
 class JobPreparePayload(BaseModel):
@@ -92,6 +93,7 @@ class JobUpdatePayload(BaseModel):
     expected_revision: int = Field(ge=0)
     name: str
     parameters: dict[str, object] = Field(default_factory=dict)
+    runtime_profile_id: str | None = None
 
 
 class ModelImportPayload(BaseModel):
@@ -102,3 +104,52 @@ class ModelImportPayload(BaseModel):
     purpose: str
     class_names: list[str] | None = None
     source_note: str = ""
+
+
+class WorkOrderFiltersPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    class_ids: list[int] = Field(default_factory=list)
+    risk_statuses: list[str] = Field(default_factory=list)
+    max_min_confidence: float | None = Field(default=None, ge=0, le=1)
+    include_no_box: bool = False
+    box_count_min: int | None = Field(default=None, ge=0)
+    box_count_max: int | None = Field(default=None, ge=0)
+    comparison_score_min: float | None = Field(default=None, ge=0)
+    total_limit: int | None = Field(default=None, ge=1, le=10000)
+    per_class_limit: int | None = Field(default=None, ge=1, le=10000)
+    exclude_reviewed: bool = True
+    seed: int = 42
+
+
+class WorkOrderCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+    task_type: str
+    source_type: str
+    source_id: str
+    filters: WorkOrderFiltersPayload = Field(default_factory=WorkOrderFiltersPayload)
+
+
+class WorkOrderFreezePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=0)
+
+
+class AmendmentCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=200)
+    item_ids: list[str] = Field(min_length=1)
+
+
+class RuntimeProfilePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=200)
+    python_executable: str = Field(min_length=1)
+    project_root: str = Field(min_length=1)
+    devices: list[str] = Field(min_length=1)
+
+
+class SourceBindingPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    locator: str = Field(min_length=1)

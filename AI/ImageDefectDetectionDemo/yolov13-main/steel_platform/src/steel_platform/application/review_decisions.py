@@ -117,11 +117,27 @@ class ReviewDecisionService:
                         "复核条目的类别编号不属于任务类别模式",
                         status_code=422,
                     )
-                decision = _validate_command(command)
-                if any(box.class_id != item.expected_class_id for box in decision.boxes):
+                project = uow.projects.get(project_id)
+                policy = project.annotation_policy if project is not None else None
+                single_class_locked = (policy or {}).get("mode") == "single_class_locked"
+                allow_empty_labels = bool((policy or {}).get("allow_empty_labels", False))
+                decision = _validate_command(command, allow_empty_labels=allow_empty_labels)
+                if single_class_locked and any(
+                    box.class_id != item.expected_class_id for box in decision.boxes
+                ):
                     raise ApplicationError(
                         "class_mismatch",
                         "一张图片只能保存文件前缀对应的缺陷类别",
+                        status_code=422,
+                    )
+                if (
+                    not decision.boxes
+                    and decision.action in {ReviewState.ACCEPTED, ReviewState.CORRECTED}
+                    and not allow_empty_labels
+                ):
+                    raise ApplicationError(
+                        "empty_label_not_allowed",
+                        "当前项目不允许将空标签作为有效标注保存",
                         status_code=422,
                     )
 
@@ -252,13 +268,16 @@ class ReviewDecisionService:
         return DecisionResult.from_response(record.response)
 
 
-def _validate_command(command: ReviewDecisionCommand) -> AnnotationDecision:
+def _validate_command(
+    command: ReviewDecisionCommand, *, allow_empty_labels: bool = False
+) -> AnnotationDecision:
     try:
         return AnnotationDecision(
             ReviewState(command.action),
             tuple(command.boxes),
             command.note,
             command.expected_revision,
+            allow_empty_labels,
         )
     except (TypeError, ValueError) as exc:
         raise ApplicationError("validation_error", str(exc), status_code=422) from exc

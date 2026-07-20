@@ -38,6 +38,7 @@ def create_job(
         preset=payload.preset,
         input_refs=[row.model_dump() for row in payload.input_refs],
         parameters=payload.parameters,
+        runtime_profile_id=payload.runtime_profile_id,
     )
 
 
@@ -59,6 +60,7 @@ def update_job(
         expected_revision=payload.expected_revision,
         name=payload.name,
         parameters=payload.parameters,
+        runtime_profile_id=payload.runtime_profile_id,
     )
 
 

@@ -1,0 +1,10 @@
+project_name: steel-surface-defect-demo
+classes: [Cr, In, Pa, PS, RS, Sc]
+seed: 42
+per_class: 30
+validation_per_class: 10
+
+# 业务规则由数据库中的项目标注策略保存：
+# mode: single_class_locked
+# allow_empty_labels: false
+# class_inference: filename_prefix

@@ -38,7 +38,7 @@ def test_review_route_loads_project_context_marks_review_active_and_clears_cross
 
     assert "await loadProjects();" in source
     assert "reviewWorkspace();" in source
-    assert 'setActiveNavigation("#review")' in source
+    assert 'setActiveNavigation("#annotation")' in source
     assert "roundId: null" in source
     assert "window.location.assign" not in source
 
@@ -68,11 +68,12 @@ def test_directly_selected_review_task_renders_its_scoped_entry() -> None:
     assert 'item.type === "review_round"' in source
 
 
-def test_no_pending_queue_renders_the_completion_summary() -> None:
+def test_no_pending_queue_renders_a_read_only_archive() -> None:
     source = REVIEW_JS.read_text(encoding="utf-8")
 
     assert "const nextPending = reviewState.queue.find" in source
-    assert "if (!nextPending) { renderCompletion" in source
+    assert "reviewState.readOnly = !nextPending" in source
+    assert '$("reviewTitle").textContent = "已完成工单档案"' in source
 
 
 def test_review_workspace_escapes_imported_names_and_api_metadata() -> None:

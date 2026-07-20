@@ -1,8 +1,27 @@
 # 钢材表面异常视觉检测平台
 
-这是一个 Windows 本地可运行的多项目数据闭环：登记图片、复核候选、发布不可变数据集、准备训练/推理、再以新证据创建下一轮复核。它是教学与流程验证平台，不以小样本指标替代生产验收。
+这是一个 Windows 本地可运行的多项目机器视觉数据闭环。当前页面按业务顺序组织为“数据中心 → 标注中心 → 模型中心 → 监测中心”，覆盖登记图片、初始标注、候选复核、不可变数据集、训练/推理与状态追踪。它是教学与流程验证平台，不以小样本指标替代生产验收。
 
-下一阶段的人工操作、指标解读、误差分析和v3迭代路线见[《钢材缺陷模型下一阶段迭代：学习与操作手册》](docs/NEXT_STAGE_MODEL_ITERATION_GUIDE.md)。该手册明确区分当前可用功能与“条件筛选复核队列”等待实现功能。
+下一阶段的人工操作、指标解读、误差分析和v3迭代路线见[《钢材缺陷模型下一阶段迭代：学习与操作手册》](docs/NEXT_STAGE_MODEL_ITERATION_GUIDE.md)。通用条件筛选工单现已进入标注中心，可绑定一次推理运行并按类别、风险、置信度和数量创建可复现队列。
+
+## 当前模块边界
+
+- **数据中心**：项目、数据源、集合、图片与不可变数据集。
+- **标注中心**：初始人工标注、机器候选复核、条件筛选、已完成档案与修订工单。
+- **模型中心**：训练、评估、流式推理、任务日志、模型库与结果视图。
+- **监测中心**：真实读取标注、任务、模型、数据集和推理状态；相机与报警留待后续。
+
+Python平台仍是当前唯一业务写入端。`services/business-service/` 是 Java 21 + Spring Boot + MySQL 学习骨架，只通过幂等领域事件建立只读投影，不与 SQLite 双写。
+
+标签历史精度审计与安全修复：
+
+```powershell
+steel-platform annotations audit --config config\platform.local.yaml
+steel-platform annotations repair-rounding --config config\platform.local.yaml --dry-run
+steel-platform annotations repair-rounding --config config\platform.local.yaml --apply
+```
+
+可移植配置推荐使用 `config/platform.portable.example.yaml`、`project.example.yaml` 与本机私有的 `machine.local.yaml`。Windows组员可从 `scripts/bootstrap.ps1`、`configure.ps1`、`doctor.ps1`、`start.ps1` 开始。
 
 ## 1. 背景知识
 
@@ -89,7 +108,7 @@ steel-platform artifacts verify --config config\platform.local.yaml
 
 ## 7. 创建集合
 
-集合是在单个项目内组织资产的视图。managed导入成功后会创建对应集合，可在浏览器文件页查看。当前CLI没有 `collection create/add` 命令；通用的“从条件筛选结果创建复核任务”仍是待实现功能。集合不能引用另一个项目的资产。
+集合是在单个项目内组织资产的视图。managed导入成功后会创建对应集合，可在数据中心查看。当前CLI没有 `collection create/add` 命令；标注中心可从数据源或集合创建初始标注工单，也可从推理运行创建条件筛选工单。集合不能引用另一个项目的资产。
 
 ## 8. 进入有范围的复核任务
 
@@ -148,7 +167,7 @@ cd <YOLO_PROJECT>\steel_platform
 steel-platform serve --config config\platform.local.yaml
 ```
 
-打开 `http://127.0.0.1:8765`，选择项目，再点击顶部“模型工作台”。第一次升级旧工作区时必须先执行：
+打开 `http://127.0.0.1:8765`，选择项目，再点击顶部“模型中心”。第一次升级旧工作区时必须先执行：
 
 ```powershell
 steel-platform backup create --config config\platform.local.yaml

@@ -25,6 +25,7 @@ docs/superpowers/
 **/*.egg-info/
 **/build/
 **/dist/
+**/target/
 .venv/
 venv/
 env/
@@ -39,6 +40,7 @@ env/
 # Temporary files and local environment configuration
 # -----------------------------------------------------------------------------
 **/.tmp-*/
+**/.test-tmp/
 *.tmp
 *.temp
 ~$*
@@ -46,6 +48,9 @@ env/
 **/.env.*
 !**/.env.example
 AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/config/platform.local.yaml
+AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/config/platform.portable.yaml
+AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/config/machine.local.yaml
+**/runtime-profiles.json
 
 # -----------------------------------------------------------------------------
 # Protected datasets and platform runtime state

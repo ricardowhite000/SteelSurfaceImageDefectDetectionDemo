@@ -1,0 +1,2 @@
+project_config: project.example.yaml
+machine_config: machine.local.yaml

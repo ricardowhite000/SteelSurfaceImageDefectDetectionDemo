@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from steel_platform.infrastructure.artifacts import LocalArtifactStore
 from steel_platform.infrastructure.database import make_engine
 from steel_platform.infrastructure.models import AssetModel, DatasetVersionModel, ModelVersionModel, new_id
+from steel_platform.infrastructure.runtime_profiles import RuntimeProfileStore
 from steel_platform.infrastructure.workbench_executor import RecordingTerminalLauncher
 from steel_platform.interfaces.api import create_app
 from test_review_api import _prepared_workspace
@@ -133,6 +134,79 @@ def test_workbench_options_and_training_job_are_project_scoped(tmp_path: Path) -
 
     missing_project = client.get(f"/api/v1/projects/not-this-project/jobs/{job['id']}")
     assert missing_project.status_code == 404
+
+
+def test_training_job_uses_selected_machine_runtime_profile(tmp_path: Path) -> None:
+    settings, project_id, dataset_id, model_id = _workbench_workspace(tmp_path)
+    custom_root = tmp_path / "可迁移 YOLO 项目"
+    custom_root.mkdir()
+    custom_python = tmp_path / "环境" / "python.exe"
+    custom_python.parent.mkdir()
+    custom_python.write_bytes(b"")
+    profile = RuntimeProfileStore(
+        settings.artifact_root / "machine" / "runtime-profiles.json"
+    ).add(
+        name="组员电脑 YOLO",
+        python_executable=str(custom_python),
+        project_root=str(custom_root),
+        devices=["cpu"],
+    )
+    client = TestClient(create_app(settings, terminal_launcher=RecordingTerminalLauncher()))
+
+    options = client.get(f"/api/v1/projects/{project_id}/workbench/options")
+    assert options.status_code == 200
+    assert options.json()["runtime_profiles"] == [profile]
+
+    created = client.post(
+        f"/api/v1/projects/{project_id}/jobs",
+        json={
+            "name": "可迁移环境冒烟训练",
+            "kind": "train",
+            "preset": "smoke",
+            "runtime_profile_id": profile["id"],
+            "input_refs": [
+                {"role": "dataset", "ref_type": "dataset", "ref_id": dataset_id},
+                {"role": "model", "ref_type": "model", "ref_id": model_id},
+            ],
+            "parameters": {"device": "cpu"},
+        },
+    )
+    assert created.status_code == 201, created.text
+    job = created.json()
+    assert job["runtime_profile_id"] == profile["id"]
+
+    prepared = client.post(
+        f"/api/v1/projects/{project_id}/jobs/{job['id']}/prepare",
+        json={"expected_revision": job["revision"]},
+        headers={"Idempotency-Key": "prepare-portable-runtime"},
+    )
+    assert prepared.status_code == 200, prepared.text
+    runtime = prepared.json()["runtime"]
+    assert runtime["arguments"][0] == str(custom_python)
+    assert runtime["cwd"] == str(custom_root)
+    assert prepared.json()["runtime_profile_id"] == profile["id"]
+
+
+def test_job_rejects_missing_runtime_profile(tmp_path: Path) -> None:
+    settings, project_id, dataset_id, model_id = _workbench_workspace(tmp_path)
+    client = TestClient(create_app(settings, terminal_launcher=RecordingTerminalLauncher()))
+
+    response = client.post(
+        f"/api/v1/projects/{project_id}/jobs",
+        json={
+            "name": "不存在的运行环境",
+            "kind": "train",
+            "preset": "smoke",
+            "runtime_profile_id": "missing-runtime-profile",
+            "input_refs": [
+                {"role": "dataset", "ref_type": "dataset", "ref_id": dataset_id},
+                {"role": "model", "ref_type": "model", "ref_id": model_id},
+            ],
+            "parameters": {"device": "0"},
+        },
+    )
+    assert response.status_code == 404
+    assert response.json()["code"] == "not_found"
 
 
 def test_inference_job_uses_registered_model_and_source_with_batch_one(tmp_path: Path) -> None:

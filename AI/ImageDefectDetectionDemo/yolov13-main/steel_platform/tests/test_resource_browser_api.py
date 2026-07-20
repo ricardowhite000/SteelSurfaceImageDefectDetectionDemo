@@ -243,6 +243,42 @@ def test_asset_detail_selects_overlay_from_resource_context(tmp_path: Path) -> N
     }
 
 
+def test_asset_detail_keeps_valid_overlays_when_one_revision_has_rounding_overflow(
+    tmp_path: Path,
+) -> None:
+    settings, project_id, _ = _context(tmp_path)
+    engine = make_engine(settings.database_url)
+    store = LocalArtifactStore(settings.artifact_root)
+    invalid_ref = store.put_bytes(
+        b"0 0.96497 0.506167 0.0700603 0.0381834\n",
+        media_type="text/yolo",
+    )
+    with Session(engine) as session:
+        session.add(
+            AnnotationRevisionModel(
+                id="revision-rounding-overflow",
+                project_id=project_id,
+                image_asset_id="asset-1",
+                origin="machine",
+                storage_key=invalid_ref.storage_key,
+                sha256=invalid_ref.sha256,
+                box_count=1,
+            )
+        )
+        session.commit()
+
+    response = TestClient(create_app(settings), raise_server_exceptions=False).get(
+        f"/api/v1/projects/{project_id}/resources/source/source-images/assets/asset-1"
+    )
+
+    assert response.status_code == 200
+    overlays = {item["id"]: item for item in response.json()["overlays"]}
+    assert overlays["revision-human"]["validation_status"] == "valid"
+    assert overlays["revision-rounding-overflow"]["validation_status"] == "repairable"
+    assert overlays["revision-rounding-overflow"]["boxes"] == []
+    assert "边界框超出图像范围" in overlays["revision-rounding-overflow"]["validation_message"]
+
+
 def test_review_report_reconciles_decisions_classes_and_problem_notes(tmp_path: Path) -> None:
     settings, project_id, _ = _context(tmp_path)
     client = TestClient(create_app(settings), raise_server_exceptions=False)

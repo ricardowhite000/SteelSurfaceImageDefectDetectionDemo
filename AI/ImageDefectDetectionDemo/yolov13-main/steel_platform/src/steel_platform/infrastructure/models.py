@@ -53,6 +53,15 @@ class ProjectModel(Base):
     schema_version: Mapped[str] = mapped_column(String(50), default="steel-defects-v1")
     class_schema_id: Mapped[str | None] = mapped_column(ForeignKey("class_schemas.id"))
     revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    annotation_policy_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON,
+        default=lambda: {
+            "mode": "multi_class",
+            "allow_empty_labels": True,
+            "class_inference": "manual",
+        },
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
 
 
@@ -93,6 +102,29 @@ class SourceRootModel(Base):
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_source_root_name"),)
 
 
+class WorkspaceNodeModel(Base):
+    __tablename__ = "workspace_nodes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class SourceBindingModel(Base):
+    __tablename__ = "source_bindings"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_root_id: Mapped[str] = mapped_column(ForeignKey("source_roots.id"), nullable=False)
+    node_id: Mapped[str] = mapped_column(ForeignKey("workspace_nodes.id"), nullable=False)
+    locator: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="available", nullable=False)
+    manifest_sha256: Mapped[str | None] = mapped_column(String(64))
+    last_verified_at: Mapped[datetime | None] = mapped_column()
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("source_root_id", "node_id", name="uq_source_binding_node"),
+    )
+
+
 class AssetModel(Base):
     __tablename__ = "assets"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -120,6 +152,7 @@ class AnnotationRevisionModel(Base):
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     box_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(100), default="local-user", nullable=False)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
 
 
@@ -158,16 +191,26 @@ class ReviewRoundModel(Base):
     __tablename__ = "review_rounds"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    parent_work_order_id: Mapped[str | None] = mapped_column(ForeignKey("review_rounds.id"))
     number: Mapped[int] = mapped_column(Integer, nullable=False)
     kind: Mapped[str] = mapped_column(String(30), default="training")
     name: Mapped[str] = mapped_column(String(200), default="复核任务", nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    task_type: Mapped[str] = mapped_column(String(40), default="inference_review", nullable=False)
+    source_type: Mapped[str | None] = mapped_column(String(40))
+    source_id: Mapped[str | None] = mapped_column(String(36))
+    selection_spec_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    manifest_key: Mapped[str | None] = mapped_column(Text)
+    manifest_sha256: Mapped[str | None] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(100), default="local-user", nullable=False)
     source_collection_id: Mapped[str | None] = mapped_column(ForeignKey("collections.id"))
     class_schema_id: Mapped[str | None] = mapped_column(ForeignKey("class_schemas.id"))
     target_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="active")
     per_class: Mapped[int] = mapped_column(Integer, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column()
+    archived_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     __table_args__ = (UniqueConstraint("project_id", "number", "kind", name="uq_review_round"),)
 
@@ -256,6 +299,38 @@ class ReviewDraftModel(Base):
     boxes_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     note: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
+
+
+class AnnotationRevisionCheckModel(Base):
+    __tablename__ = "annotation_revision_checks"
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("annotation_revisions.id"), primary_key=True
+    )
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(50))
+    message: Mapped[str | None] = mapped_column(Text)
+    repaired_by_revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("annotation_revisions.id")
+    )
+    checked_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class AnnotationActionModel(Base):
+    __tablename__ = "annotation_actions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    work_order_id: Mapped[str] = mapped_column(ForeignKey("review_rounds.id"), nullable=False)
+    item_id: Mapped[str | None] = mapped_column(ForeignKey("review_items.id"))
+    actor: Mapped[str] = mapped_column(String(100), default="local-user", nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    from_state: Mapped[str | None] = mapped_column(String(30))
+    to_state: Mapped[str | None] = mapped_column(String(30))
+    annotation_revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("annotation_revisions.id")
+    )
+    request_id: Mapped[str | None] = mapped_column(String(100))
+    note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
 
 
 class DatasetVersionModel(Base):

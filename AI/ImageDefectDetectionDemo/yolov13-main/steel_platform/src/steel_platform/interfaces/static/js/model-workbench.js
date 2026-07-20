@@ -36,9 +36,20 @@ function populateOptions() {
   $("trainingModel").innerHTML = optionRows(options.models || []) || '<option value="">没有已验证模型</option>';
   $("inferenceModel").innerHTML = optionRows(options.models || [], { readyDetector: true }) || '<option value="">没有可用检测器</option>';
   $("inferenceSource").innerHTML = optionRows(options.sources || []) || '<option value="">没有可用数据源</option>';
-  const devices = (options.allowed_devices || ["cpu"]).map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
-  $("trainingDevice").innerHTML = devices;
-  $("inferenceDevice").innerHTML = devices;
+  const runtimeProfiles = `<option value="">平台默认环境（兼容旧任务）</option>${(options.runtime_profiles || []).map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name)} · ${escapeHtml(profile.id.slice(0, 8))}</option>`).join("")}`;
+  $("trainingRuntimeProfile").innerHTML = runtimeProfiles;
+  $("inferenceRuntimeProfile").innerHTML = runtimeProfiles;
+  populateDevices("trainingRuntimeProfile", "trainingDevice");
+  populateDevices("inferenceRuntimeProfile", "inferenceDevice");
+}
+
+function populateDevices(profileSelectId, deviceSelectId) {
+  const profileId = $(profileSelectId).value;
+  const profile = (view.options?.runtime_profiles || []).find((item) => item.id === profileId);
+  const devices = profile?.devices?.length ? profile.devices : (view.options?.allowed_devices || ["cpu"]);
+  const previous = $(deviceSelectId).value;
+  $(deviceSelectId).innerHTML = devices.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
+  if (devices.includes(previous)) $(deviceSelectId).value = previous;
 }
 
 function switchTab(tab) {
@@ -69,6 +80,7 @@ async function createTraining(event) {
   try {
     const job = await request("/jobs", { method: "POST", body: JSON.stringify({
       name: $("trainingJobName").value, kind, preset,
+      runtime_profile_id: $("trainingRuntimeProfile").value || null,
       input_refs: [
         { role: "dataset", ref_type: "dataset", ref_id: $("trainingDataset").value },
         { role: "model", ref_type: "model", ref_id: $("trainingModel").value },
@@ -96,6 +108,7 @@ async function createInference(event) {
     if (!refId) throw new Error("请选择数据源，或填写图片/视频资产编号。");
     const job = await request("/jobs", { method: "POST", body: JSON.stringify({
       name: $("inferenceJobName").value, kind: "infer", preset: $("inferencePreset").value,
+      runtime_profile_id: $("inferenceRuntimeProfile").value || null,
       input_refs: [
         { role: "model", ref_type: "model", ref_id: $("inferenceModel").value },
         { role: "source", ref_type: refType, ref_id: refId },
@@ -128,8 +141,10 @@ function jobProgress(job) {
 function renderJobDetail() {
   const job = view.selectedJob;
   if (!job) return;
+  const runtimeProfile = (view.options?.runtime_profiles || []).find((item) => item.id === job.runtime_profile_id);
+  const runtimeLabel = runtimeProfile ? `${runtimeProfile.name} · ${runtimeProfile.id.slice(0, 8)}` : (job.runtime_profile_id ? `本机未绑定 · ${job.runtime_profile_id}` : "平台默认环境（历史兼容）");
   $("workbenchJobDetail").innerHTML = `<div class="job-detail-head"><div><p class="eyebrow">${escapeHtml(zh("jobKind", job.kind))}</p><h2>${escapeHtml(job.name)}</h2></div><span class="status-badge ${statusTone(job.status)}">${escapeHtml(zh("status", job.status))}</span></div>
-    <dl class="detail-list"><dt>任务编号</dt><dd>${escapeHtml(job.id)}</dd><dt>预设</dt><dd>${escapeHtml(zh("preset", job.preset))}</dd><dt>进度</dt><dd>${escapeHtml(jobProgress(job))}</dd><dt>创建时间</dt><dd>${escapeHtml(formatDate(job.created_at))}</dd><dt>退出码</dt><dd>${escapeHtml(job.exit_code ?? "—")}</dd><dt>失败原因</dt><dd>${escapeHtml(job.error_message || "—")}</dd></dl>
+    <dl class="detail-list"><dt>任务编号</dt><dd>${escapeHtml(job.id)}</dd><dt>预设</dt><dd>${escapeHtml(zh("preset", job.preset))}</dd><dt>运行环境</dt><dd>${escapeHtml(runtimeLabel)}</dd><dt>进度</dt><dd>${escapeHtml(jobProgress(job))}</dd><dt>创建时间</dt><dd>${escapeHtml(formatDate(job.created_at))}</dd><dt>退出码</dt><dd>${escapeHtml(job.exit_code ?? "—")}</dd><dt>失败原因</dt><dd>${escapeHtml(job.error_message || "—")}</dd></dl>
     <div class="job-actions"><button id="prepareSelectedJob" type="button" ${job.status !== "draft" ? "disabled" : ""}>生成并冻结命令</button><button id="showJobResults" type="button">刷新结果</button></div>`;
   $("prepareSelectedJob")?.addEventListener("click", prepareSelectedJob);
   $("showJobResults")?.addEventListener("click", loadResults);
@@ -285,6 +300,8 @@ export function initModelWorkbench() {
   document.querySelectorAll("[data-workbench-tab]").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.workbenchTab)));
   $("trainingJobForm")?.addEventListener("submit", createTraining);
   $("inferenceJobForm")?.addEventListener("submit", createInference);
+  $("trainingRuntimeProfile")?.addEventListener("change", () => populateDevices("trainingRuntimeProfile", "trainingDevice"));
+  $("inferenceRuntimeProfile")?.addEventListener("change", () => populateDevices("inferenceRuntimeProfile", "inferenceDevice"));
   $("modelImportForm")?.addEventListener("submit", importModel);
   $("workbenchRefresh")?.addEventListener("click", renderModelWorkbench);
   $("refreshJobs")?.addEventListener("click", loadJobs);
