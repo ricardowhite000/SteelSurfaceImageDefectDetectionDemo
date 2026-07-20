@@ -65,6 +65,49 @@ def test_job_worker_runs_argument_array_and_persists_utf8_log(tmp_path: Path) ->
     assert "中文日志 ok" in (workspace / "job.log").read_text(encoding="utf-8")
 
 
+def test_cpu_smoke_timeout_terminates_process_and_preserves_log(tmp_path: Path) -> None:
+    settings, project_id, _ = _prepared_workspace(tmp_path)
+    workspace_key = "workbench/jobs/cpu-timeout"
+    workspace = settings.artifact_root / workspace_key
+    workspace.mkdir(parents=True)
+    with Session(make_engine(settings.database_url)) as session:
+        session.add(
+            JobModel(
+                id="cpu-timeout",
+                project_id=project_id,
+                name="CPU超时测试",
+                kind="train",
+                preset="smoke_cpu",
+                status="ready",
+                workspace_key=workspace_key,
+                log_key=f"{workspace_key}/job.log",
+                spec_json={
+                    "parameters": {"device": "cpu", "epochs": 1, "timeout_seconds": 1},
+                    "runtime": {
+                        "arguments": [
+                            sys.executable,
+                            "-c",
+                            "import time; print('started', flush=True); time.sleep(10)",
+                        ],
+                        "cwd": str(tmp_path),
+                        "output_dir": str(workspace / "output"),
+                        "expected_outputs": [],
+                    },
+                },
+            )
+        )
+        session.commit()
+
+    assert execute_job(settings, "cpu-timeout") == "failed"
+
+    with Session(make_engine(settings.database_url)) as session:
+        failed = session.get(JobModel, "cpu-timeout")
+        assert failed.status == "failed"
+        assert "1800" not in (failed.error_message or "")
+        assert "超时" in (failed.error_message or "")
+    assert "started" in (workspace / "job.log").read_text(encoding="utf-8")
+
+
 def test_recording_terminal_launcher_receives_wrapper_without_executing_it(tmp_path: Path) -> None:
     launcher = RecordingTerminalLauncher()
     wrapper = tmp_path / "launch.ps1"

@@ -56,6 +56,41 @@ def _workbench_workspace(tmp_path: Path):
     return settings, project_id, dataset_id, model_id
 
 
+def test_runtime_profile_devices_override_machine_legacy_device(tmp_path: Path) -> None:
+    settings, project_id, dataset_id, model_id = _workbench_workspace(tmp_path)
+    settings = settings.model_copy(update={"device": "cpu"})
+    registry = RuntimeProfileStore(
+        settings.artifact_root / "machine" / "runtime-profiles.json"
+    )
+    cuda_profile = registry.add(
+        name="团队NVIDIA运行环境",
+        python_executable=str(tmp_path / "python.exe"),
+        project_root=str(tmp_path),
+        devices=["0"],
+        backend="cuda",
+    )
+    client = TestClient(create_app(settings, terminal_launcher=RecordingTerminalLauncher()))
+
+    created = client.post(
+        f"/api/v1/projects/{project_id}/jobs",
+        json={
+            "name": "使用独立CUDA档案的冒烟训练",
+            "kind": "train",
+            "preset": "smoke",
+            "runtime_profile_id": cuda_profile["id"],
+            "input_refs": [
+                {"role": "dataset", "ref_type": "dataset", "ref_id": dataset_id},
+                {"role": "model", "ref_type": "model", "ref_id": model_id},
+            ],
+            "parameters": {"device": "0"},
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    assert created.json()["runtime_profile_id"] == cuda_profile["id"]
+    assert created.json()["parameters"]["device"] == "0"
+
+
 def test_workbench_options_and_training_job_are_project_scoped(tmp_path: Path) -> None:
     settings, project_id, dataset_id, model_id = _workbench_workspace(tmp_path)
     launcher = RecordingTerminalLauncher()

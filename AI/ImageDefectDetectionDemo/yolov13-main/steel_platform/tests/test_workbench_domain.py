@@ -82,6 +82,45 @@ def test_inference_is_always_streamed_with_batch_one() -> None:
         )
 
 
+def test_cpu_presets_disable_amp_and_reduce_image_size() -> None:
+    train = WorkbenchJobSpec.create(
+        kind=JobKind.TRAIN,
+        preset="smoke_cpu",
+        input_refs=(
+            JobInputRef("dataset", "dataset-1", "dataset"),
+            JobInputRef("model", "model-1", "model"),
+        ),
+        parameters={},
+        allowed_devices=("cpu",),
+    )
+    infer = WorkbenchJobSpec.create(
+        kind=JobKind.INFER,
+        preset="infer_cpu",
+        input_refs=(
+            JobInputRef("model", "model-1", "model"),
+            JobInputRef("source", "source-1", "source"),
+        ),
+        parameters={},
+        allowed_devices=("cpu",),
+    )
+
+    assert train.parameters == {
+        "epochs": 1,
+        "imgsz": 320,
+        "batch": 1,
+        "patience": 0,
+        "workers": 0,
+        "amp": False,
+        "seed": 42,
+        "device": "cpu",
+        "timeout_seconds": 1800,
+    }
+    assert infer.parameters["imgsz"] == 320
+    assert infer.parameters["batch"] == 1
+    assert infer.parameters["stream"] is True
+    assert infer.parameters["device"] == "cpu"
+
+
 def test_training_requires_a_registered_parent_model() -> None:
     with pytest.raises(ValueError, match="model"):
         WorkbenchJobSpec.create(

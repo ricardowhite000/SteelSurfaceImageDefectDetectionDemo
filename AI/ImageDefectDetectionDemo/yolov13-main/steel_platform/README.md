@@ -2,6 +2,19 @@
 
 这是一个 Windows 本地可运行的多项目机器视觉数据闭环。当前页面按业务顺序组织为“数据中心 → 标注中心 → 模型中心 → 监测中心”，覆盖登记图片、初始标注、候选复核、不可变数据集、训练/推理与状态追踪。它是教学与流程验证平台，不以小样本指标替代生产验收。
 
+## 组员四步启动（推荐入口）
+
+先从团队网盘下载 `steel-platform-demo-1.0.0.zip`，再进入本仓库的 `steel_platform` 目录。AMD或无独立显卡电脑使用 `cpu`；NVIDIA电脑可以使用 `cuda`：
+
+```powershell
+.\scripts\bootstrap.ps1 -Runtime cpu
+.\scripts\configure.ps1 -Runtime cpu
+.\scripts\doctor.ps1
+.\scripts\start.ps1
+```
+
+脚本依次完成“双Conda环境安装 → 本机工作区配置与Demo导入 → 严格诊断 → 启动”。首次部署、SHA256校验、CPU/GPU差异和故障恢复见[《Windows跨电脑交付与四步启动指南》](docs/PORTABLE_DELIVERY_GUIDE.md)，实机测试请填写[《可复现验收记录模板》](docs/REPRODUCIBILITY_ACCEPTANCE_TEMPLATE.md)。
+
 下一阶段的人工操作、指标解读、误差分析和v3迭代路线见[《钢材缺陷模型下一阶段迭代：学习与操作手册》](docs/NEXT_STAGE_MODEL_ITERATION_GUIDE.md)。通用条件筛选工单现已进入标注中心，可绑定一次推理运行并按类别、风险、置信度和数量创建可复现队列。
 
 ## 当前模块边界
@@ -57,10 +70,10 @@ SQLite 保存资源关系和版本元数据；`artifact_root` 保存平台托管
 
 复制 `config/platform.example.yaml` 为 `config/platform.local.yaml` 后再填写本机路径。配置中所有相对路径都以**配置文件所在目录**解析，例如 `artifacts` 表示 `config/artifacts`，`sqlite:///platform.db` 表示 `config/platform.db`。因此请使用相对路径或你自己的本机路径，切勿把盘符、用户名、共享目录或真实数据路径提交到 Git。
 
-首次安装（从 `yolov13-main` 执行）：
+旧工作区的手工安装方式（新组员应优先使用上面的四步脚本）：
 
 ```powershell
-D:\anaconda\Scripts\conda.exe run --no-capture-output -n steel-review python -m pip install -e ".\steel_platform[web,dev]"
+conda run -n steel-review python -m pip install -e ".\steel_platform[web,dev]"
 ```
 
 ## 4. 初始化和切换项目
@@ -228,7 +241,7 @@ steel-platform review audit-create --inference <INFERENCE_ID> --per-class 10 --c
 ## 自动化验证
 
 ```powershell
-D:\anaconda\Scripts\conda.exe run --no-capture-output -n steel-review python -m pytest -q
+conda run -n steel-review python -m pytest -q
 ```
 
 测试覆盖资源隔离、跨项目访问拒绝、managed/external 导入、任务队列范围、外部源哈希校验和迁移约束。

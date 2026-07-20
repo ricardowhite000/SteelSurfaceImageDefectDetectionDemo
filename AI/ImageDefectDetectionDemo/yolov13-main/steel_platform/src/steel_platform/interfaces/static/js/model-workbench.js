@@ -52,6 +52,36 @@ function populateDevices(profileSelectId, deviceSelectId) {
   if (devices.includes(previous)) $(deviceSelectId).value = previous;
 }
 
+function applyRuntimeRecommendation(profileSelectId, target) {
+  const profileId = $(profileSelectId).value;
+  const profile = (view.options?.runtime_profiles || []).find((item) => item.id === profileId);
+  if (!profile) return;
+  if (target === "training") {
+    if (profile?.backend === "cpu") {
+      $("trainingPreset").value = "smoke_cpu";
+      $("trainingImageSize").value = "320";
+      $("trainingBatch").value = "1";
+      $("trainingPatience").value = "0";
+      $("trainingWorkers").value = "0";
+      $("trainingDevice").value = "cpu";
+    } else {
+      if ($("trainingPreset").value === "smoke_cpu") $("trainingPreset").value = "smoke";
+      $("trainingImageSize").value = "640";
+      $("trainingBatch").value = "4";
+      $("trainingPatience").value = "20";
+      $("trainingDevice").value = profile.devices?.includes("0") ? "0" : profile.devices?.[0];
+    }
+  } else if (profile?.backend === "cpu") {
+    $("inferencePreset").value = "infer_cpu";
+    $("inferenceImageSize").value = "320";
+    $("inferenceDevice").value = "cpu";
+  } else {
+    if ($("inferencePreset").value === "infer_cpu") $("inferencePreset").value = "visual";
+    $("inferenceImageSize").value = "640";
+    $("inferenceDevice").value = profile.devices?.includes("0") ? "0" : profile.devices?.[0];
+  }
+}
+
 function switchTab(tab) {
   document.querySelectorAll("[data-workbench-tab]").forEach((button) => button.classList.toggle("active", button.dataset.workbenchTab === tab));
   const panels = { training: "workbenchTrainingPanel", inference: "workbenchInferencePanel", jobs: "workbenchJobsPanel", models: "workbenchModelsPanel" };
@@ -300,8 +330,14 @@ export function initModelWorkbench() {
   document.querySelectorAll("[data-workbench-tab]").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.workbenchTab)));
   $("trainingJobForm")?.addEventListener("submit", createTraining);
   $("inferenceJobForm")?.addEventListener("submit", createInference);
-  $("trainingRuntimeProfile")?.addEventListener("change", () => populateDevices("trainingRuntimeProfile", "trainingDevice"));
-  $("inferenceRuntimeProfile")?.addEventListener("change", () => populateDevices("inferenceRuntimeProfile", "inferenceDevice"));
+  $("trainingRuntimeProfile")?.addEventListener("change", () => {
+    populateDevices("trainingRuntimeProfile", "trainingDevice");
+    applyRuntimeRecommendation("trainingRuntimeProfile", "training");
+  });
+  $("inferenceRuntimeProfile")?.addEventListener("change", () => {
+    populateDevices("inferenceRuntimeProfile", "inferenceDevice");
+    applyRuntimeRecommendation("inferenceRuntimeProfile", "inference");
+  });
   $("modelImportForm")?.addEventListener("submit", importModel);
   $("workbenchRefresh")?.addEventListener("click", renderModelWorkbench);
   $("refreshJobs")?.addEventListener("click", loadJobs);

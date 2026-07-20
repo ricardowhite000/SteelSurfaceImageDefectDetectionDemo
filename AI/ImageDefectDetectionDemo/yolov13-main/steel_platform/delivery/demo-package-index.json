@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "package_id": "steel-platform-demo",
+  "package_version": "1.0.0",
+  "filename": "steel-platform-demo-1.0.0.zip",
+  "sha256": "563013d37eacfa1a85fdb331eb93f3561886b54a56b827396d219efbe2da34fa",
+  "size_bytes": 12538699,
+  "distribution": "private-team-drive",
+  "contents": {
+    "images": 60,
+    "labels": 60,
+    "train_images": 48,
+    "val_images": 12,
+    "models": 2
+  }
+}

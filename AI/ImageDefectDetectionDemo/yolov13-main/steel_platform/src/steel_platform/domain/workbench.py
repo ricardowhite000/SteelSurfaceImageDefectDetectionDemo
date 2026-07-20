@@ -51,6 +51,17 @@ _DEFAULTS: dict[tuple[JobKind, str], dict[str, object]] = {
         "amp": True,
         "seed": 42,
     },
+    (JobKind.TRAIN, "smoke_cpu"): {
+        "epochs": 1,
+        "imgsz": 320,
+        "batch": 1,
+        "patience": 0,
+        "workers": 0,
+        "amp": False,
+        "seed": 42,
+        "device": "cpu",
+        "timeout_seconds": 1800,
+    },
     (JobKind.TRAIN, "formal"): {
         "epochs": 100,
         "imgsz": 640,
@@ -71,6 +82,14 @@ _DEFAULTS: dict[tuple[JobKind, str], dict[str, object]] = {
         "batch": 1,
         "stream": True,
         "save_crop": False,
+    },
+    (JobKind.INFER, "infer_cpu"): {
+        "conf": 0.25,
+        "imgsz": 320,
+        "batch": 1,
+        "stream": True,
+        "save_crop": False,
+        "device": "cpu",
     },
     (JobKind.INFER, "pseudo_label"): {
         "conf": 0.20,

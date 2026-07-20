@@ -17,7 +17,7 @@ import yaml
 from steel_platform.infrastructure.config import PlatformSettings
 from steel_platform.infrastructure.database import make_engine
 from steel_platform.infrastructure.artifacts import ArtifactRef, LocalArtifactStore
-from steel_platform.infrastructure.models import AnnotationRevisionCheckModel, AnnotationRevisionModel, AssetModel, CandidatePredictionModel, DatasetVersionModel, DomainEventModel, InferenceRunModel, JobModel, ModelVersionModel, OutboxEventModel, ReviewItemModel, ReviewRoundModel, SourceRootModel, utc_now
+from steel_platform.infrastructure.models import AnnotationRevisionCheckModel, AnnotationRevisionModel, AssetModel, CandidatePredictionModel, DatasetVersionModel, DomainEventModel, InferenceRunModel, JobModel, ModelVersionModel, OutboxEventModel, ReviewItemModel, ReviewRoundModel, SourceBindingModel, SourceRootModel, utc_now
 from steel_platform.infrastructure.yolo import parse_yolo_text, repair_yolo_rounding_text
 
 
@@ -143,11 +143,11 @@ def verify_external_sources(settings: PlatformSettings) -> dict[str, object]:
     checked_source_assets = 0
     checked_candidate_labels = 0
     by_source: list[dict[str, object]] = []
+    store = LocalArtifactStore(settings.artifact_root)
     with Session(make_engine(settings.database_url)) as session:
         roots = session.scalars(
             select(SourceRootModel)
-            .where(SourceRootModel.mode == "external")
-            .order_by(SourceRootModel.kind, SourceRootModel.id)
+            .order_by(SourceRootModel.mode, SourceRootModel.kind, SourceRootModel.id)
         ).all()
         if not roots:
             return {
@@ -162,26 +162,49 @@ def verify_external_sources(settings: PlatformSettings) -> dict[str, object]:
         for root in roots:
             source_invalid = 0
             source_checked = 0
+            binding = session.scalar(
+                select(SourceBindingModel)
+                .where(SourceBindingModel.source_root_id == root.id)
+                .order_by(
+                    SourceBindingModel.last_verified_at.desc(),
+                    SourceBindingModel.id,
+                )
+            )
+            locator = binding.locator if binding is not None else root.path
             assets = session.scalars(
                 select(AssetModel)
                 .where(AssetModel.source_root_id == root.id)
                 .order_by(AssetModel.relative_path, AssetModel.id)
             ).all()
             for asset in assets:
-                path = Path(root.path) / (asset.relative_path or "")
                 source_checked += 1
                 checked_source_assets += 1
-                if root.kind == "images" and asset.kind == "image":
+                if asset.kind == "image":
                     checked_images += 1
-                if not path.is_file() or _digest(path) != asset.sha256:
-                    invalid.append(str(path))
+                if root.mode == "managed":
+                    valid = bool(asset.storage_key) and store.verify(
+                        ArtifactRef(
+                            str(asset.storage_key or ""),
+                            asset.sha256,
+                            asset.size_bytes,
+                            asset.media_type,
+                        )
+                    )
+                    invalid_path = asset.storage_key or f"managed:{asset.id}"
+                else:
+                    path = Path(locator) / (asset.relative_path or "")
+                    valid = path.is_file() and _digest(path) == asset.sha256
+                    invalid_path = str(path)
+                if not valid:
+                    invalid.append(str(invalid_path))
                     source_invalid += 1
             by_source.append(
                 {
                     "id": root.id,
                     "kind": root.kind,
                     "name": root.name,
-                    "path": root.path,
+                    "mode": root.mode,
+                    "path": locator,
                     "checked": source_checked,
                     "invalid": source_invalid,
                 }
@@ -195,7 +218,7 @@ def verify_external_sources(settings: PlatformSettings) -> dict[str, object]:
             .where(InferenceRunModel.name == "seed-v1-candidates")
         ).all()
         for prediction in predictions:
-            if prediction.annotation_revision_id is None:
+            if prediction.annotation_revision_id is None or settings.candidate_labels is None:
                 continue
             revision = session.get(AnnotationRevisionModel, prediction.annotation_revision_id)
             path = settings.candidate_labels / f"{Path(prediction.filename).stem}.txt"

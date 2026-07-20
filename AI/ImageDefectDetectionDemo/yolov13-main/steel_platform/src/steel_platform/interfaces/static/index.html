@@ -116,7 +116,7 @@
       <form id="trainingJobForm" class="workbench-form">
         <label>任务名称<input id="trainingJobName" required maxlength="200" value="YOLOv13 冒烟训练"></label>
         <label>任务类型<select id="trainingJobKind"><option value="train">训练</option><option value="evaluate">评估</option></select></label>
-        <label>任务预设<select id="trainingPreset"><option value="smoke">冒烟训练（1轮）</option><option value="formal">正式训练（100轮）</option></select></label>
+        <label>任务预设<select id="trainingPreset"><option value="smoke">GPU冒烟训练（1轮）</option><option value="smoke_cpu">CPU冒烟训练（1轮，最长30分钟）</option><option value="formal">正式训练（100轮）</option></select></label>
         <label>数据集<select id="trainingDataset" required></select></label>
         <label>父模型 / 待评估模型<select id="trainingModel" required></select></label>
         <label>运行环境<select id="trainingRuntimeProfile"></select><span class="muted">选择本机已登记的YOLO环境；留空则兼容旧配置。</span></label>
@@ -136,7 +136,7 @@
       <div class="workbench-panel-head"><div><h2>创建流式推理任务</h2><p>图片集合与视频固定 batch=1，并以流式方式处理，避免显存随文件总量持续增长。</p></div></div>
       <form id="inferenceJobForm" class="workbench-form">
         <label>任务名称<input id="inferenceJobName" required maxlength="200" value="钢板图片推理"></label>
-        <label>预设<select id="inferencePreset"><option value="visual">常规推理</option><option value="pseudo_label">辅助标注</option><option value="video">视频推理</option></select></label>
+        <label>预设<select id="inferencePreset"><option value="visual">常规推理</option><option value="infer_cpu">CPU常规推理</option><option value="pseudo_label">辅助标注</option><option value="video">视频推理</option></select></label>
         <label>检测模型<select id="inferenceModel" required></select></label>
         <label>运行环境<select id="inferenceRuntimeProfile"></select><span class="muted">任务只保存逻辑环境编号，不保存到项目配置中。</span></label>
         <label>来源类型<select id="inferenceSourceType"><option value="source">已登记数据源 / 图片文件夹</option><option value="asset">单张图片或视频资产</option></select></label>

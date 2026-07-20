@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import BinaryIO
 
-from steel_platform.application.errors import ApplicationError
+from steel_platform.application.errors import ApplicationError, NotFoundError
 from steel_platform.domain.ports import WorkbenchGateway
 from steel_platform.domain.workbench import (
     JobInputRef,
@@ -30,6 +30,35 @@ class WorkbenchService:
                 "infer": ["visual", "pseudo_label", "video"],
             },
         }
+
+    def _allowed_devices_for(
+        self, project_id: str, runtime_profile_id: str | None
+    ) -> tuple[str, ...]:
+        if not runtime_profile_id:
+            return self.allowed_devices
+        profiles = self.gateway.options(project_id).get("runtime_profiles") or []
+        profile = next(
+            (
+                row
+                for row in profiles
+                if isinstance(row, Mapping) and str(row.get("id")) == runtime_profile_id
+            ),
+            None,
+        )
+        if profile is None:
+            raise NotFoundError("运行环境不存在")
+        devices = tuple(
+            dict.fromkeys(
+                str(device).strip()
+                for device in (profile.get("devices") or [])
+                if str(device).strip()
+            )
+        )
+        if not devices:
+            raise ApplicationError(
+                "runtime_profile_invalid", "运行环境没有配置可用设备", status_code=422
+            )
+        return devices
 
     def list_jobs(self, project_id: str) -> Sequence[dict[str, object]]:
         return self.gateway.list_jobs(project_id)
@@ -69,7 +98,9 @@ class WorkbenchService:
                     for row in input_refs
                 ),
                 parameters=parameters,
-                allowed_devices=self.allowed_devices,
+                allowed_devices=self._allowed_devices_for(
+                    project_id, runtime_profile_id
+                ),
                 runtime_profile_id=runtime_profile_id,
             )
         except (ValueError, TypeError) as exc:
@@ -90,6 +121,11 @@ class WorkbenchService:
         clean_name = name.strip()
         if not clean_name or len(clean_name) > 200:
             raise ApplicationError("invalid_job_spec", "任务名称不能为空且不能超过200个字符", status_code=422)
+        selected_runtime_profile_id = runtime_profile_id or (
+            str(current["runtime_profile_id"])
+            if current.get("runtime_profile_id")
+            else None
+        )
         try:
             spec = WorkbenchJobSpec.create(
                 kind=JobKind(str(current["kind"])),
@@ -108,12 +144,10 @@ class WorkbenchService:
                     for row in current["input_refs"]
                 ),
                 parameters=parameters,
-                allowed_devices=self.allowed_devices,
-                runtime_profile_id=runtime_profile_id or (
-                    str(current["runtime_profile_id"])
-                    if current.get("runtime_profile_id")
-                    else None
+                allowed_devices=self._allowed_devices_for(
+                    project_id, selected_runtime_profile_id
                 ),
+                runtime_profile_id=selected_runtime_profile_id,
             )
         except (ValueError, TypeError) as exc:
             raise ApplicationError("invalid_job_spec", str(exc), status_code=422) from exc

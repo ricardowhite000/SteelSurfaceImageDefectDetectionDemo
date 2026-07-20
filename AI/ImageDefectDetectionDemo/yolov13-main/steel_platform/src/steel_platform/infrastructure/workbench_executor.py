@@ -124,7 +124,8 @@ def execute_job(settings: PlatformSettings, job_id: str) -> str:
         if workspace != output_dir and workspace not in output_dir.parents:
             raise ApplicationError("illegal_output_path", "任务输出目录越界", status_code=500)
         output_dir.mkdir(parents=True, exist_ok=True)
-        device = str(job.spec_json.get("parameters", {}).get("device", "cpu"))
+        job_parameters = dict(job.spec_json.get("parameters", {}))
+        device = str(job_parameters.get("device", "cpu"))
         lock_path = _device_lock(settings, device)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -149,6 +150,7 @@ def execute_job(settings: PlatformSettings, job_id: str) -> str:
     final_status = "failed"
     error_message: str | None = None
     cancelled = False
+    timed_out = False
     try:
         environment = os.environ.copy()
         environment.setdefault("PYTHONUTF8", "1")
@@ -178,6 +180,12 @@ def execute_job(settings: PlatformSettings, job_id: str) -> str:
             reader = threading.Thread(target=read_output, name=f"job-log-{job_id}", daemon=True)
             reader.start()
             last_heartbeat = utc_now() - timedelta(seconds=3)
+            timeout_seconds = job_parameters.get("timeout_seconds")
+            deadline = (
+                utc_now() + timedelta(seconds=int(timeout_seconds))
+                if isinstance(timeout_seconds, int) and timeout_seconds > 0
+                else None
+            )
             output_closed = False
             pending_progress: tuple[int, int] | None = None
             while process.poll() is None or not output_closed:
@@ -193,6 +201,12 @@ def execute_job(settings: PlatformSettings, job_id: str) -> str:
                 except queue.Empty:
                     line = ""
                 now = utc_now()
+                if deadline is not None and now >= deadline and process.poll() is None:
+                    timed_out = True
+                    process.terminate()
+                    log_stream.write(f"\n[平台] 任务运行超过 {timeout_seconds} 秒，已请求终止。\n")
+                    log_stream.flush()
+                    deadline = None
                 if now - last_heartbeat >= timedelta(seconds=2):
                     with Session(engine) as heartbeat_session:
                         running = heartbeat_session.get(JobModel, job_id)
@@ -215,7 +229,10 @@ def execute_job(settings: PlatformSettings, job_id: str) -> str:
             for relative in runtime.get("expected_outputs", [])
             if not (Path(str(runtime.get("output_dir"))) / relative).is_file()
         ]
-        if cancelled:
+        if timed_out:
+            final_status = "failed"
+            error_message = f"任务超时：超过{timeout_seconds}秒"
+        elif cancelled:
             final_status = "cancelled"
             error_message = "用户请求取消"
         elif exit_code != 0:
