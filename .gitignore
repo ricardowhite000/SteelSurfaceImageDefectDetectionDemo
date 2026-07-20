@@ -51,6 +51,7 @@ AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/config/platform.local.ya
 AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/config/platform.portable.yaml
 AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/config/machine.local.yaml
 **/runtime-profiles.json
+deliverables/
 
 # -----------------------------------------------------------------------------
 # Protected datasets and platform runtime state

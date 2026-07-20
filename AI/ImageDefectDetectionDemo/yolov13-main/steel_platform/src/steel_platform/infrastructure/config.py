@@ -12,13 +12,14 @@ class PlatformSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     project_name: str
+    workspace_root: Path | None = None
     database_url: str
     artifact_root: Path
-    source_images: Path
-    candidate_labels: Path
-    review_csv: Path
-    seed_manifest: Path
-    seed_dataset: Path
+    source_images: Path | None = None
+    candidate_labels: Path | None = None
+    review_csv: Path | None = None
+    seed_manifest: Path | None = None
+    seed_dataset: Path | None = None
     classes: tuple[str, ...]
     host: str = "127.0.0.1"
     port: int = 8765
@@ -67,6 +68,7 @@ def load_settings(path: Path) -> PlatformSettings:
         merged.update({key: value for key, value in raw.items() if key not in {"project_config", "machine_config"}})
         raw = merged
     environment_overrides = {
+        "workspace_root": "STEEL_PLATFORM_WORKSPACE_ROOT",
         "database_url": "STEEL_PLATFORM_DATABASE_URL",
         "artifact_root": "STEEL_PLATFORM_ARTIFACT_ROOT",
         "host": "STEEL_PLATFORM_HOST",
@@ -78,14 +80,23 @@ def load_settings(path: Path) -> PlatformSettings:
         if variable in os.environ:
             raw[field] = int(os.environ[variable]) if field == "port" else os.environ[variable]
     base = config_path.parent
+    if raw.get("workspace_root"):
+        workspace_root = (base / Path(str(raw["workspace_root"]))).resolve()
+        raw["workspace_root"] = workspace_root
+        raw.setdefault("database_url", "sqlite:///state/platform.db")
+        raw.setdefault("artifact_root", str(workspace_root / "artifacts"))
+    else:
+        workspace_root = None
     for field in ("artifact_root", "source_images", "candidate_labels", "review_csv", "seed_manifest", "seed_dataset"):
-        raw[field] = (base / Path(raw[field])).resolve()
+        if raw.get(field) is not None:
+            raw[field] = (base / Path(str(raw[field]))).resolve()
     for field in ("yolo_project_root", "parent_weights"):
         if raw.get(field):
             raw[field] = (base / Path(raw[field])).resolve()
     database_url = str(raw["database_url"])
     prefix = "sqlite:///"
     if database_url.startswith(prefix):
-        database_path = (base / database_url[len(prefix):]).resolve()
+        database_base = workspace_root or base
+        database_path = (database_base / database_url[len(prefix):]).resolve()
         raw["database_url"] = f"sqlite:///{database_path.as_posix()}"
     return PlatformSettings.model_validate(raw)

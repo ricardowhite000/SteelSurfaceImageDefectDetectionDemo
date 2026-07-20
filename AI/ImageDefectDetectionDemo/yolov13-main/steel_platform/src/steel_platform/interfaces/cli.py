@@ -29,6 +29,7 @@ artifacts_app = typer.Typer(help="资产校验和清理预览")
 annotations_app = typer.Typer(help="标签版本审计与安全修复")
 runtime_app = typer.Typer(help="本机YOLO运行环境档案")
 events_app = typer.Typer(help="领域事件导出与投影分发")
+package_app = typer.Typer(help="可移植Demo包构建、校验与安装")
 source_app = typer.Typer(help="data source verification and rebinding")
 import_app = typer.Typer(help="import status")
 
@@ -47,8 +48,54 @@ for name, group in (
     ("annotations", annotations_app),
     ("runtime", runtime_app),
     ("events", events_app),
+    ("package", package_app),
 ):
     app.add_typer(group, name=name)
+
+
+@package_app.command("build-demo")
+def package_build_demo(
+    dataset: Path = typer.Option(..., "--dataset"),
+    base_weights: Path = typer.Option(..., "--base-weights"),
+    detector_weights: Path = typer.Option(..., "--detector-weights"),
+    output: Path = typer.Option(Path("steel-platform-demo-1.0.0.zip"), "--output"),
+    config: Path = typer.Option(..., "--config", "-c"),
+) -> None:
+    from steel_platform.application.delivery_package import build_demo_package
+
+    settings = _config(config)
+    result = build_demo_package(
+        dataset_root=dataset,
+        base_weights=base_weights,
+        detector_weights=detector_weights,
+        output=output,
+        classes=settings.classes,
+    )
+    typer.echo(json.dumps({"file": str(result.path), "sha256": result.sha256}, ensure_ascii=False))
+
+
+@package_app.command("verify")
+def package_verify(
+    file: Path = typer.Option(..., "--file"),
+    config: Path | None = typer.Option(None, "--config", "-c"),
+) -> None:
+    from steel_platform.application.delivery_package import verify_delivery_package
+
+    if config is not None:
+        _config(config)
+    result = verify_delivery_package(file)
+    typer.echo(json.dumps({"file": str(result.path), "sha256": result.sha256, "manifest": result.manifest}, ensure_ascii=False))
+
+
+@package_app.command("install")
+def package_install(
+    file: Path = typer.Option(..., "--file"),
+    config: Path = typer.Option(..., "--config", "-c"),
+) -> None:
+    from steel_platform.application.delivery_package import install_delivery_package
+
+    result = install_delivery_package(_config(config), file)
+    typer.echo(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 
 def _runtime_store(settings):
@@ -63,6 +110,7 @@ def runtime_add(
     python_executable: Path = typer.Option(..., "--python"),
     project_root: Path = typer.Option(..., "--project-root"),
     device: list[str] = typer.Option(["0"], "--device"),
+    backend: str | None = typer.Option(None, "--backend"),
     config: Path = typer.Option(..., "--config", "-c"),
 ) -> None:
     profile = _runtime_store(_config(config)).add(
@@ -70,6 +118,26 @@ def runtime_add(
         python_executable=str(python_executable.resolve()),
         project_root=str(project_root.resolve()),
         devices=device,
+        backend=backend,
+    )
+    typer.echo(json.dumps(profile, ensure_ascii=False, sort_keys=True))
+
+
+@runtime_app.command("upsert")
+def runtime_upsert(
+    name: str = typer.Option(..., "--name"),
+    python_executable: Path = typer.Option(..., "--python"),
+    project_root: Path = typer.Option(..., "--project-root"),
+    device: list[str] = typer.Option(["cpu"], "--device"),
+    backend: str = typer.Option(..., "--backend"),
+    config: Path = typer.Option(..., "--config", "-c"),
+) -> None:
+    profile = _runtime_store(_config(config)).upsert(
+        name=name,
+        python_executable=str(python_executable.resolve()),
+        project_root=str(project_root.resolve()),
+        devices=device,
+        backend=backend,
     )
     typer.echo(json.dumps(profile, ensure_ascii=False, sort_keys=True))
 
@@ -91,21 +159,17 @@ def runtime_check(
 
 
 @app.command("doctor")
-def doctor(config: Path = typer.Option(..., "--config", "-c")) -> None:
+def doctor(
+    config: Path = typer.Option(..., "--config", "-c"),
+    strict: bool = typer.Option(False, "--strict"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from steel_platform.application.doctor import build_doctor_report
+
     settings = _config(config)
-    current, head = database_version(settings.database_url)
-    report = {
-        "database": {"current": current, "head": head, "ready": current == head},
-        "artifact_root": {"path": str(settings.artifact_root), "available": settings.artifact_root.is_dir()},
-        "source_images": {"path": str(settings.source_images), "available": settings.source_images.is_dir()},
-        "runtime_profiles": [
-            _runtime_store(settings).check(profile["id"])
-            for profile in _runtime_store(settings).list()
-        ],
-        "listen": f"http://{settings.host}:{settings.port}",
-    }
+    report = build_doctor_report(settings, strict=strict)
     typer.echo(json.dumps(report, ensure_ascii=False, sort_keys=True))
-    if not report["database"]["ready"] or not report["artifact_root"]["available"]:
+    if not report["ready"]:
         raise typer.Exit(2)
 
 
@@ -212,6 +276,8 @@ def project_check(config: Path = typer.Option(..., "--config", "-c")) -> None:
         ("种子清单", settings.seed_manifest, "file"),
         ("种子数据集", settings.seed_dataset, "dir"),
     ):
+        if path is None:
+            continue
         valid = path.is_dir() if kind == "dir" else path.is_file()
         if not valid:
             problems.append(f"{label}不存在：{path}")
@@ -224,19 +290,21 @@ def project_check(config: Path = typer.Option(..., "--config", "-c")) -> None:
         typer.echo("Database upgrade required: steel-platform db upgrade --config <yaml>", err=True)
         raise typer.Exit(2)
     if current == head and settings.database_path.is_file():
-        from steel_platform.application.maintenance import verify_external_sources
+        from steel_platform.application.maintenance import verify_artifacts, verify_external_sources
         report = verify_external_sources(settings)
+        artifacts = verify_artifacts(settings)
         for source in report["by_source"]:
             typer.echo(
-                f"数据源：{source['kind']}；已检查：{source['checked']}；"
+                f"数据源：{source['kind']}；模式：{source['mode']}；已检查：{source['checked']}；"
                 f"异常：{source['invalid']}；路径：{source['path']}"
             )
         typer.echo(
             f"数据库版本：{current}；数据源：{report['sources']}；"
             f"来源资产：{report['source_assets']}；登记原图：{report['images']}；"
-            f"候选标签：{report['candidate_labels']}；哈希异常：{report['invalid']}"
+            f"候选标签：{report['candidate_labels']}；托管资产：{artifacts['checked']}；"
+            f"哈希异常：{report['invalid'] + artifacts['invalid']}"
         )
-        if report["invalid"]:
+        if report["invalid"] or artifacts["invalid"]:
             raise typer.Exit(2)
     else:
         typer.echo("源路径检查通过；数据库尚未升级，未执行登记资产哈希核对。")

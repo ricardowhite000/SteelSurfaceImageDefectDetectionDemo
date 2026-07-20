@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "files": {
+    "platform-win-py311.lock.txt": "418dd295284ab2cb3e96bf0db2d8cbccdfdd45c894275c46897cf9dd50d9a2cf",
+    "yolo-common-win-py311.lock.txt": "82dc88b004bbf89880b2118e08c86521092ea79930370e79c49952332921a62e",
+    "yolo-cpu-win-py311.lock.txt": "04aba90eb23c92639413e6f33d691e02fdda6c2d145ee8dd130586a5bdb710a4",
+    "yolo-cuda121-win-py311.lock.txt": "8caf0099f5a7fb6ece615e1fa1c5db83f5ec79ddc2312a263d94ebb3178d9a9c"
+  }
+}

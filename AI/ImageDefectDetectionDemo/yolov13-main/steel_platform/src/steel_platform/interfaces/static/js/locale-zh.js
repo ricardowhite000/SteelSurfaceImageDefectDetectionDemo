@@ -11,7 +11,7 @@ const dictionaries = {
   item: { image: "图片", weights: "模型权重", manifest: "清单", label: "标签", artifact: "产物" },
   origin: { human: "人工确认", machine: "机器候选", imported: "导入标签" },
   jobKind: { train: "模型训练", evaluate: "模型评估", infer: "模型推理", verify_model: "模型校验" },
-  preset: { smoke: "冒烟训练", formal: "正式训练", fixed_val: "固定验证集评估", visual: "常规推理", pseudo_label: "辅助标注", video: "视频推理", metadata: "元数据校验" },
+  preset: { smoke: "GPU冒烟训练", smoke_cpu: "CPU冒烟训练", formal: "正式训练", fixed_val: "固定验证集评估", visual: "常规推理", infer_cpu: "CPU常规推理", pseudo_label: "辅助标注", video: "视频推理", metadata: "元数据校验" },
   modelPurpose: { base_weight: "基础迁移权重", detector: "钢材缺陷检测器" },
 };
 

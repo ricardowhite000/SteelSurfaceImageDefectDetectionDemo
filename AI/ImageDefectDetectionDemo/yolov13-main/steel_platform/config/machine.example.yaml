@@ -1,13 +1,7 @@
-database_url: sqlite:///../../../data/tutorial_workspace/steel_platform_demo/platform.db
-artifact_root: ../../../data/tutorial_workspace/steel_platform_demo/artifacts
-source_images: ../../../data/unmarked/NEU surface defect database
-candidate_labels: ../../../data/tutorial_workspace/steel_seed_v1/pseudo_labels
-review_csv: ../../../data/tutorial_workspace/steel_seed_v1/pseudo_labels/pseudo_review.csv
-seed_manifest: ../../../data/tutorial_workspace/steel_seed_v1/seed_manifest.csv
-seed_dataset: ../../../data/tutorial_workspace/steel_seed_v1/dataset
+workspace_root: C:/SteelPlatformWorkspace
 host: 127.0.0.1
 port: 8765
 yolo_python: python
 yolo_project_root: ../..
-parent_weights: ../../runs/steel_tutorial/train/seed_v1/weights/best.pt
-device: "0"
+parent_weights: null
+device: cpu
