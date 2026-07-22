@@ -2,7 +2,7 @@
 
 这是一个 Windows 本地可运行的多项目机器视觉数据闭环。当前页面按业务顺序组织为“数据中心 → 标注中心 → 模型中心 → 监测中心”，覆盖登记图片、初始标注、候选复核、不可变数据集、训练/推理与状态追踪。它是教学与流程验证平台，不以小样本指标替代生产验收。
 
-> 第一次安装、不了解命令行或从Private仓库获取代码的组员，请直接阅读[《新组员下载安装与启动指南》](docs/BEGINNER_INSTALLATION_GUIDE.md)。文档从仓库授权、GitHub Desktop克隆、网盘备用源码ZIP一直讲到平台启动和常见故障。
+> 第一次安装、不了解命令行或从Private仓库获取代码的组员，请直接阅读[《新组员下载安装与启动指南》](AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/docs/BEGINNER_INSTALLATION_GUIDE.md)。文档从仓库授权、GitHub Desktop克隆、网盘备用源码ZIP一直讲到平台启动和常见故障。
 
 ## 组员四步启动（推荐入口）
 
@@ -15,13 +15,13 @@
 .\scripts\start.ps1
 ```
 
-脚本依次完成“双Conda环境安装 → 本机工作区配置与Demo导入 → 严格诊断 → 启动”。首次部署、SHA256校验、CPU/GPU差异和故障恢复见[《Windows跨电脑交付与四步启动指南》](docs/PORTABLE_DELIVERY_GUIDE.md)，实机测试请填写[《可复现验收记录模板》](docs/REPRODUCIBILITY_ACCEPTANCE_TEMPLATE.md)。
+脚本依次完成“双Conda环境安装 → 本机工作区配置与Demo导入 → 严格诊断 → 启动”。首次部署、SHA256校验、CPU/GPU差异和故障恢复见[《Windows跨电脑交付与四步启动指南》](AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/docs/PORTABLE_DELIVERY_GUIDE.md)，实机测试请填写[《可复现验收记录模板》](AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/docs/REPRODUCIBILITY_ACCEPTANCE_TEMPLATE.md)。
 
-想了解项目最初为什么搭建平台、需求如何变化、走过哪些弯路以及当前推进到什么阶段，请先阅读[《钢材表面异常视觉项目与辅助平台建设复盘》](docs/PROJECT_PROGRESS_AND_PLATFORM_RETROSPECTIVE.md)。
+想了解项目最初为什么搭建平台、需求如何变化、走过哪些弯路以及当前推进到什么阶段，请先阅读[《钢材表面异常视觉项目与辅助平台建设复盘》](AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/docs/PROJECT_PROGRESS_AND_PLATFORM_RETROSPECTIVE.md)。
 
-下一阶段的人工操作、指标解读、误差分析和v3迭代路线见[《钢材缺陷模型下一阶段迭代：学习与操作手册》](docs/NEXT_STAGE_MODEL_ITERATION_GUIDE.md)。通用条件筛选工单现已进入标注中心，可绑定一次推理运行并按类别、风险、置信度和数量创建可复现队列。
+下一阶段的人工操作、指标解读、误差分析和v3迭代路线见[《钢材缺陷模型下一阶段迭代：学习与操作手册》](AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/docs/NEXT_STAGE_MODEL_ITERATION_GUIDE.md)。通用条件筛选工单现已进入标注中心，可绑定一次推理运行并按类别、风险、置信度和数量创建可复现队列。
 
-需要进一步查看当前代码如何实现、工程整改证据、测试结果和技术栈边界，请阅读[《AI模型与数据开发平台：实现Review与架构评审》](docs/AI_WORKFLOW_PLATFORM_IMPLEMENTATION_REVIEW.md)。
+需要进一步查看当前代码如何实现、工程整改证据、测试结果和技术栈边界，请阅读[《AI模型与数据开发平台：实现Review与架构评审》](AI/ImageDefectDetectionDemo/yolov13-main/steel_platform/docs/AI_WORKFLOW_PLATFORM_IMPLEMENTATION_REVIEW.md)。
 
 ## 当前模块边界
 
