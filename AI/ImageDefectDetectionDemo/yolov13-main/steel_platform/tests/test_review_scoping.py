@@ -561,6 +561,67 @@ def test_decision_is_payload_bound_idempotent_and_task_local(
     assert getattr(conflict.value, "code", None) == "idempotency_conflict"
 
 
+def test_multi_class_project_round_trips_mixed_class_boxes(
+    decision_context: _DecisionContext,
+) -> None:
+    boxes = (
+        AnnotationBox(0, 0.35, 0.35, 0.2, 0.2),
+        AnnotationBox(1, 0.7, 0.7, 0.15, 0.15),
+    )
+    decision_context.service.decide(
+        decision_context.project_id,
+        decision_context.round_id,
+        decision_context.item_id,
+        _command("corrected", boxes=boxes),
+        "mixed-classes",
+    )
+    query = ReviewTaskQueryService(
+        lambda: SqlAlchemyUnitOfWork(decision_context.session_factory),
+        class_names=("Cr", "In", "Pa", "PS", "RS", "Sc"),
+        artifact_store=decision_context.store,
+        annotation_codec=_JsonAnnotationCodec(),
+    )
+
+    detail = query.get_item(
+        decision_context.project_id,
+        decision_context.round_id,
+        decision_context.item_id,
+    )
+
+    assert tuple(box.class_id for box in detail.boxes) == (0, 1)
+    assert detail.class_names == ("Cr", "In", "Pa", "PS", "RS", "Sc")
+    assert detail.annotation_mode == "multi_class"
+
+
+def test_single_class_locked_project_rejects_mixed_class_boxes(
+    decision_context: _DecisionContext,
+) -> None:
+    with decision_context.session_factory.begin() as session:
+        project = session.get(ProjectModel, decision_context.project_id)
+        assert project is not None
+        project.annotation_policy_json = {
+            "mode": "single_class_locked",
+            "allow_empty_labels": False,
+            "class_inference": "filename_prefix",
+        }
+
+    with pytest.raises(Exception) as invalid:
+        decision_context.service.decide(
+            decision_context.project_id,
+            decision_context.round_id,
+            decision_context.item_id,
+            _command(
+                "corrected",
+                boxes=(
+                    AnnotationBox(0, 0.35, 0.35, 0.2, 0.2),
+                    AnnotationBox(1, 0.7, 0.7, 0.15, 0.15),
+                ),
+            ),
+            "locked-mixed-classes",
+        )
+    assert getattr(invalid.value, "code", None) == "class_mismatch"
+
+
 def test_decision_rejects_empty_key_stale_revision_and_cross_scope_item(
     decision_context: _DecisionContext,
 ) -> None:
@@ -591,6 +652,16 @@ def test_decision_rejects_empty_key_stale_revision_and_cross_scope_item(
             "wrong-project",
         )
 
+    with pytest.raises(Exception) as stale:
+        decision_context.service.decide(
+            decision_context.project_id,
+            decision_context.round_id,
+            decision_context.item_id,
+            _command("corrected", expected_revision=-1),
+            "stale",
+        )
+    assert getattr(stale.value, "code", None) == "revision_conflict"
+
     decision_context.service.decide(
         decision_context.project_id,
         decision_context.round_id,
@@ -598,15 +669,6 @@ def test_decision_rejects_empty_key_stale_revision_and_cross_scope_item(
         _command("accepted"),
         "accepted",
     )
-    with pytest.raises(Exception) as stale:
-        decision_context.service.decide(
-            decision_context.project_id,
-            decision_context.round_id,
-            decision_context.item_id,
-            _command("corrected", expected_revision=0),
-            "stale",
-        )
-    assert getattr(stale.value, "code", None) == "revision_conflict"
 
 
 def test_doubtful_saves_draft_and_adds_one_same_task_replacement(

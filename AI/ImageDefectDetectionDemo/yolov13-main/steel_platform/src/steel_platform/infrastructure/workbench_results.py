@@ -18,6 +18,7 @@ from steel_platform.infrastructure.models import (
     AssetModel,
     AnnotationRevisionModel,
     CandidatePredictionModel,
+    ClassSchemaModel,
     DomainEventModel,
     ExperimentRunModel,
     InferenceRunModel,
@@ -26,6 +27,7 @@ from steel_platform.infrastructure.models import (
     MetricSnapshotModel,
     ModelVersionModel,
     OutboxEventModel,
+    ProjectModel,
     SourceRootModel,
     utc_now,
 )
@@ -42,6 +44,17 @@ def _media_type(path: Path) -> str:
     if path.suffix.lower() == ".csv":
         return "text/csv"
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+def _project_class_names(
+    session: Session, project_id: str, settings: PlatformSettings
+) -> tuple[str, ...]:
+    project = session.get(ProjectModel, project_id)
+    if project is not None and project.class_schema_id:
+        schema = session.get(ClassSchemaModel, project.class_schema_id)
+        if schema is not None:
+            return tuple(schema.names_json)
+    return tuple(settings.classes)
 
 
 def ingest_job_outputs(settings: PlatformSettings, job_id: str) -> dict[str, object]:
@@ -134,7 +147,9 @@ def ingest_job_outputs(settings: PlatformSettings, job_id: str) -> dict[str, obj
             if model.class_schema_json is None:
                 model.class_schema_json = names
             loadable = metadata.get("loadable") is True
-            schema_valid = model.purpose == "base_weight" or names == list(settings.classes)
+            schema_valid = model.purpose == "base_weight" or names == list(
+                _project_class_names(session, job.project_id, settings)
+            )
             model.verification_status = "ready" if loadable and schema_valid else "rejected"
             event = DomainEventModel(
                 project_id=job.project_id,
@@ -262,7 +277,9 @@ def ingest_job_outputs(settings: PlatformSettings, job_id: str) -> dict[str, obj
                     purpose="detector",
                     verification_status="ready",
                     evaluation_status="not_evaluated",
-                    class_schema_json=list(settings.classes),
+                    class_schema_json=list(
+                        _project_class_names(session, job.project_id, settings)
+                    ),
                     weights_sha256=best_asset.sha256,
                     weights_key=best_asset.storage_key,
                     manifest_key=manifest_ref.storage_key,
@@ -328,6 +345,7 @@ def _register_inference_predictions(
         assets = []
     if not assets:
         return
+    class_names = _project_class_names(session, job.project_id, settings)
     rows_by_name: dict[str, list[dict[str, str]]] = defaultdict(list)
     csv_path = output_dir / "detections.csv"
     if csv_path.is_file():
@@ -347,9 +365,7 @@ def _register_inference_predictions(
         )
         confidences = [float(row["confidence"]) for row in rows if row.get("confidence")]
         prefix = Path(asset.relative_path or "").stem.split("_", 1)[0]
-        expected_class_id = (
-            list(settings.classes).index(prefix) if prefix in settings.classes else 0
-        )
+        expected_class_id = class_names.index(prefix) if prefix in class_names else 0
         statuses: list[str] = []
         if not rows:
             statuses.append("no_box")

@@ -30,6 +30,13 @@ def test_asset_detail_and_report_are_application_routes() -> None:
     assert "window.location.assign" not in main
 
 
+def test_asset_detail_uses_project_class_schema_instead_of_steel_constants() -> None:
+    detail = (STATIC / "js" / "asset-detail.js").read_text(encoding="utf-8")
+
+    assert "detailState.detail?.class_names" in detail
+    assert '["Cr", "In", "Pa", "PS", "RS", "Sc"]' not in detail
+
+
 def test_long_names_are_ellipsized_and_user_visible_shell_is_chinese() -> None:
     css = (STATIC / "styles.css").read_text(encoding="utf-8")
     index = (STATIC / "index.html").read_text(encoding="utf-8")

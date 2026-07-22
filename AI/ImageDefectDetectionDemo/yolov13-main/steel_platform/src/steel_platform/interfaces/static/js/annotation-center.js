@@ -7,6 +7,12 @@ let workOrders = [];
 let reroute = async () => {};
 let amendmentParent = null;
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+  })[character]);
+}
+
 const labels = {
   draft: "草稿", ready: "就绪", active: "进行中", completed: "已完成", archived: "已归档", cancelled: "已取消",
   succeeded: "成功", failed: "失败", interrupted: "已中断", running: "运行中", planned: "已计划",
@@ -45,7 +51,7 @@ function spec() {
 
 function renderOptions() {
   renderSourceOptions();
-  $("workOrderClasses").innerHTML = options.classes.map((item) => `<label><input type="checkbox" value="${item.id}">${item.name}</label>`).join("");
+  $("workOrderClasses").innerHTML = options.classes.map((item) => `<label><input type="checkbox" value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</label>`).join("");
 }
 
 function renderSourceOptions() {
@@ -55,7 +61,7 @@ function renderSourceOptions() {
     ? [...options.sources.map((item) => ({ ...item, type: "source" })), ...options.collections.map((item) => ({ ...item, type: "collection" }))]
     : options.inference_runs.map((item) => ({ ...item, type: "inference" }));
   $("workOrderInference").innerHTML = entries.length
-    ? entries.map((item) => `<option value="${item.type}:${item.id}">${item.name}${item.status ? ` · ${labels[item.status] || item.status}` : ""}</option>`).join("")
+    ? entries.map((item) => `<option value="${escapeHtml(item.type)}:${escapeHtml(item.id)}">${escapeHtml(item.name)}${item.status ? ` · ${escapeHtml(labels[item.status] || item.status)}` : ""}</option>`).join("")
     : '<option value=":">暂无可用来源</option>';
   ["riskNoBox", "riskConflict", "riskLowConfidence", "workOrderConfidence"].forEach((id) => { $(id).disabled = manual; });
 }
@@ -63,9 +69,9 @@ function renderSourceOptions() {
 function renderList() {
   const container = $("workOrderList");
   if (!workOrders.length) { container.innerHTML = '<div class="empty-state">暂无标注工单。可以从一次推理运行创建专项复核工单。</div>'; return; }
-  container.innerHTML = workOrders.map((order) => `<article class="work-order-card" data-id="${order.id}">
-    <div><span class="status-badge ${order.status === "completed" ? "success" : ""}">${labels[order.status] || order.status}</span><small>${labels[order.task_type] || order.task_type}</small>
-    <h3 title="${order.name}">${order.name}</h3><p>${order.target_count} 张图片 · 版本 ${order.revision}</p></div>
+  container.innerHTML = workOrders.map((order) => `<article class="work-order-card" data-id="${escapeHtml(order.id)}">
+    <div><span class="status-badge ${order.status === "completed" ? "success" : ""}">${escapeHtml(labels[order.status] || order.status)}</span><small>${escapeHtml(labels[order.task_type] || order.task_type)}</small>
+    <h3 title="${escapeHtml(order.name)}">${escapeHtml(order.name)}</h3><p>${escapeHtml(order.target_count)} 张图片 · 版本 ${escapeHtml(order.revision)}</p></div>
     <div class="work-order-actions"><button data-action="open">${order.status === "completed" || order.status === "archived" ? "浏览档案" : "进入工单"}</button><button data-action="report">查看报告</button>${order.status === "completed" || order.status === "archived" ? '<button data-action="amend">创建修订</button>' : ""}</div>
   </article>`).join("");
   container.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => act(button.closest("article").dataset.id, button.dataset.action)));
@@ -81,7 +87,7 @@ async function act(id, action) {
 async function preview() {
   try {
     const result = await api(endpoint("/preview"), requestOptions("POST", spec()));
-    $("workOrderPreview").innerHTML = `<strong>匹配 ${result.matched} 张，最终选择 ${result.selected} 张</strong><p>类别：${Object.entries(result.by_class).map(([key, value]) => `${key} ${value}`).join("；") || "无"}</p><p>风险：${Object.entries(result.by_risk).map(([key, value]) => `${riskLabel(key)} ${value}`).join("；") || "无"}</p>`;
+    $("workOrderPreview").innerHTML = `<strong>匹配 ${escapeHtml(result.matched)} 张，最终选择 ${escapeHtml(result.selected)} 张</strong><p>类别：${Object.entries(result.by_class).map(([key, value]) => `${escapeHtml(key)} ${escapeHtml(value)}`).join("；") || "无"}</p><p>风险：${Object.entries(result.by_risk).map(([key, value]) => `${escapeHtml(riskLabel(key))} ${escapeHtml(value)}`).join("；") || "无"}</p>`;
   } catch (error) { $("workOrderPreview").textContent = error.message; }
 }
 
@@ -104,7 +110,7 @@ async function openAmendment(parentId) {
   $("amendmentDialog").showModal();
   try {
     const page = await api(endpoint(`/${parentId}/items`));
-    $("amendmentItems").innerHTML = page.items.map((item) => `<label><input type="checkbox" value="${item.id}"><span>${item.filename}</span><small>${labels[item.state] || item.state}</small></label>`).join("") || '<div class="empty-state">原工单没有图片。</div>';
+    $("amendmentItems").innerHTML = page.items.map((item) => `<label><input type="checkbox" value="${escapeHtml(item.id)}"><span>${escapeHtml(item.filename)}</span><small>${escapeHtml(labels[item.state] || item.state)}</small></label>`).join("") || '<div class="empty-state">原工单没有图片。</div>';
   } catch (error) { $("amendmentMessage").textContent = error.message; }
 }
 

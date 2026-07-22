@@ -17,7 +17,11 @@
 
 脚本依次完成“双Conda环境安装 → 本机工作区配置与Demo导入 → 严格诊断 → 启动”。首次部署、SHA256校验、CPU/GPU差异和故障恢复见[《Windows跨电脑交付与四步启动指南》](docs/PORTABLE_DELIVERY_GUIDE.md)，实机测试请填写[《可复现验收记录模板》](docs/REPRODUCIBILITY_ACCEPTANCE_TEMPLATE.md)。
 
+想了解项目最初为什么搭建平台、需求如何变化、走过哪些弯路以及当前推进到什么阶段，请先阅读[《钢材表面异常视觉项目与辅助平台建设复盘》](docs/PROJECT_PROGRESS_AND_PLATFORM_RETROSPECTIVE.md)。
+
 下一阶段的人工操作、指标解读、误差分析和v3迭代路线见[《钢材缺陷模型下一阶段迭代：学习与操作手册》](docs/NEXT_STAGE_MODEL_ITERATION_GUIDE.md)。通用条件筛选工单现已进入标注中心，可绑定一次推理运行并按类别、风险、置信度和数量创建可复现队列。
+
+需要进一步查看当前代码如何实现、工程整改证据、测试结果和技术栈边界，请阅读[《AI模型与数据开发平台：实现Review与架构评审》](docs/AI_WORKFLOW_PLATFORM_IMPLEMENTATION_REVIEW.md)。
 
 ## 当前模块边界
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from PIL import Image
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 import yaml
@@ -15,7 +16,13 @@ from steel_platform.infrastructure.config import load_settings
 from steel_platform.infrastructure.database import make_engine, upgrade_database
 from steel_platform.infrastructure.directory_picker import LocalFolderReader
 from steel_platform.infrastructure.artifacts import ArtifactRef, LocalArtifactStore
-from steel_platform.infrastructure.models import AssetModel, AnnotationRevisionModel, DomainEventModel, ReviewItemModel
+from steel_platform.infrastructure.models import (
+    AssetModel,
+    AnnotationRevisionModel,
+    DomainEventModel,
+    ReviewItemModel,
+    ReviewRoundModel,
+)
 from steel_platform.infrastructure.yolo import parse_yolo_text
 from steel_platform.interfaces.api import create_app
 
@@ -114,6 +121,43 @@ def test_review_api_is_idempotent_and_rejects_stale_revision(tmp_path: Path) -> 
         assert session.scalar(select(func.count()).select_from(AnnotationRevisionModel)) == 13
         event = session.scalar(select(DomainEventModel).where(DomainEventModel.project_id == project_id))
         assert event is not None and event.event_type == "annotation.reviewed"
+
+
+@pytest.mark.parametrize("status", ["completed", "archived", "cancelled"])
+def test_closed_work_order_rejects_new_decisions(tmp_path: Path, status: str) -> None:
+    settings, project_id, round_id = _prepared_workspace(tmp_path)
+    engine = make_engine(settings.database_url)
+    with Session(engine) as session:
+        review_round = session.get(ReviewRoundModel, round_id)
+        assert review_round is not None
+        review_round.status = status
+        before = session.scalar(select(func.count()).select_from(AnnotationRevisionModel))
+        session.commit()
+
+    client = TestClient(create_app(settings), raise_server_exceptions=False)
+    queue = client.get(
+        f"/api/v1/projects/{project_id}/review-rounds/{round_id}/items"
+    ).json()
+    item_id = queue["items"][0]["id"]
+    detail = client.get(
+        f"/api/v1/projects/{project_id}/review-rounds/{round_id}/items/{item_id}"
+    ).json()
+
+    response = client.put(
+        f"/api/v1/projects/{project_id}/review-rounds/{round_id}/items/{item_id}/decision",
+        headers={"Idempotency-Key": f"closed-{status}"},
+        json={
+            "expected_revision": detail["revision"],
+            "decision": "accepted",
+            "boxes": detail["boxes"],
+            "note": "closed work order must remain immutable",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "work_order_immutable"
+    with Session(engine) as session:
+        assert session.scalar(select(func.count()).select_from(AnnotationRevisionModel)) == before
 
 
 def _assert_error_shape(response) -> None:

@@ -8,6 +8,7 @@ Desktop.ini
 .vscode/
 .agents/
 .codex/
+**/.codex-*/
 .superpowers/
 docs/superpowers/
 

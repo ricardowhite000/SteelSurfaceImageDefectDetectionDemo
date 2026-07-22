@@ -33,7 +33,7 @@ function draw() {
     const top = y + (box.y_center - box.height / 2) * height;
     const boxWidth = box.width * width; const boxHeight = box.height * height;
     context.strokeStyle = "#ff5a36"; context.lineWidth = 2; context.strokeRect(left, top, boxWidth, boxHeight);
-    const classCode = ["Cr", "In", "Pa", "PS", "RS", "Sc"][box.class_id] || String(box.class_id);
+    const classCode = detailState.detail?.class_names?.[box.class_id] ?? String(box.class_id);
     const label = classLabels[classCode] || classCode;
     context.font = '12px "Microsoft YaHei",sans-serif';
     const labelWidth = context.measureText(label).width + 12;

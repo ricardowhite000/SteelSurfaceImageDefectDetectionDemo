@@ -85,7 +85,7 @@
       <p id="reviewMessage" class="message" role="status"></p>
       <div class="review-layout">
         <aside id="reviewQueue" class="review-queue"><h2>当前队列</h2><div id="reviewQueueList"></div></aside>
-        <section class="canvas-panel"><div class="canvas-tools"><button id="newBoxBtn" type="button">新建框（R）</button><button id="undoBtn" type="button">撤销</button><button id="redoBtn" type="button">重做</button><button id="deleteBtn" type="button">删除</button><button id="resetViewBtn" type="button">适应画布</button></div><div class="canvas-stage"><canvas id="reviewCanvas" aria-label="标注画布"></canvas><p id="emptyCanvas" class="muted">选择一张待复核图片以开始。</p></div></section>
+        <section class="canvas-panel"><div class="canvas-tools"><button id="newBoxBtn" type="button">新建框（R）</button><label for="boxClassSelector">当前框类别</label><select id="boxClassSelector" aria-label="当前标注框类别"></select><button id="undoBtn" type="button">撤销</button><button id="redoBtn" type="button">重做</button><button id="deleteBtn" type="button">删除</button><button id="resetViewBtn" type="button">适应画布</button></div><div class="canvas-stage"><canvas id="reviewCanvas" aria-label="标注画布"></canvas><p id="emptyCanvas" class="muted">选择一张待复核图片以开始。</p></div></section>
         <aside class="review-sidebar"><h2 id="reviewFilename">尚未选择图片</h2><dl id="reviewMeta" class="detail-list"></dl><label for="reviewNote">备注</label><textarea id="reviewNote" rows="5" placeholder="排除时必须说明原因"></textarea><div class="decision-actions"><button id="acceptBtn" type="button">接受（A）</button><button id="saveBtn" type="button">修正（S）</button><button id="doubtBtn" type="button">存疑（D）</button><button id="excludeBtn" type="button">排除（X）</button></div></aside>
       </div>
     </section>

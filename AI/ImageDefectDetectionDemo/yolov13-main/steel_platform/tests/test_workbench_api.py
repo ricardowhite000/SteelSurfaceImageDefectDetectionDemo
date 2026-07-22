@@ -7,7 +7,14 @@ from sqlalchemy.orm import Session
 
 from steel_platform.infrastructure.artifacts import LocalArtifactStore
 from steel_platform.infrastructure.database import make_engine
-from steel_platform.infrastructure.models import AssetModel, DatasetVersionModel, ModelVersionModel, new_id
+from steel_platform.infrastructure.models import (
+    AssetModel,
+    ClassSchemaModel,
+    DatasetVersionModel,
+    ModelVersionModel,
+    ProjectModel,
+    new_id,
+)
 from steel_platform.infrastructure.runtime_profiles import RuntimeProfileStore
 from steel_platform.infrastructure.workbench_executor import RecordingTerminalLauncher
 from steel_platform.interfaces.api import create_app
@@ -292,6 +299,43 @@ def test_inference_job_uses_registered_model_and_source_with_batch_one(tmp_path:
         },
     )
     assert rejected_shell.status_code == 422
+
+
+def test_inference_model_schema_uses_project_classes_not_global_settings(tmp_path: Path) -> None:
+    settings, project_id, _, model_id = _workbench_workspace(tmp_path)
+    with Session(make_engine(settings.database_url)) as session:
+        project = session.get(ProjectModel, project_id)
+        assert project is not None
+        schema = ClassSchemaModel(
+            id=new_id(), project_id=project_id, name="generic-defects", version=1,
+            names_json=("scratch", "pit"),
+        )
+        session.add(schema)
+        session.flush()
+        project.class_schema_id = schema.id
+        model = session.get(ModelVersionModel, model_id)
+        assert model is not None
+        model.class_schema_json = ["scratch", "pit"]
+        session.commit()
+
+    client = TestClient(create_app(settings, terminal_launcher=RecordingTerminalLauncher()))
+    options = client.get(f"/api/v1/projects/{project_id}/workbench/options").json()
+    source_id = next(row["id"] for row in options["sources"] if row["kind"] == "images")
+    created = client.post(
+        f"/api/v1/projects/{project_id}/jobs",
+        json={
+            "name": "通用项目推理",
+            "kind": "infer",
+            "preset": "visual",
+            "input_refs": [
+                {"role": "model", "ref_type": "model", "ref_id": model_id},
+                {"role": "source", "ref_type": "source", "ref_id": source_id},
+            ],
+            "parameters": {"conf": 0.3, "device": "0"},
+        },
+    )
+
+    assert created.status_code == 201, created.text
 
 
 def test_external_pt_model_import_creates_a_verification_job(tmp_path: Path) -> None:

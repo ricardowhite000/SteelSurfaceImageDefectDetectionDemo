@@ -235,6 +235,7 @@ def test_asset_detail_selects_overlay_from_resource_context(tmp_path: Path) -> N
     dataset = client.get(template.format(kind="dataset", resource="dataset-1"))
     inference = client.get(template.format(kind="inference", resource="inference-1"))
     assert review.status_code == dataset.status_code == inference.status_code == 200
+    assert review.json()["class_names"] == ["Cr", "In", "Pa", "PS", "RS", "Sc"]
     assert review.json()["selected_overlay_id"] == "revision-human"
     assert dataset.json()["selected_overlay_id"] == "revision-human"
     assert inference.json()["selected_overlay_id"] == "revision-machine"

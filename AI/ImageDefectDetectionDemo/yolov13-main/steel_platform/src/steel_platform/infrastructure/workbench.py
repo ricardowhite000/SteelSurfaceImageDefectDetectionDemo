@@ -23,6 +23,7 @@ from steel_platform.infrastructure.config import PlatformSettings
 from steel_platform.infrastructure.database import make_engine
 from steel_platform.infrastructure.models import (
     AssetModel,
+    ClassSchemaModel,
     DatasetVersionModel,
     JobLineageRefModel,
     JobModel,
@@ -292,7 +293,9 @@ class SqlWorkbenchGateway:
                 detector = self._require_model(session, project_id, model_ref.ref_id)
                 if detector.purpose != "detector":
                     raise ApplicationError("model_purpose_mismatch", "基础权重不能直接用于推理", status_code=422)
-                if detector.class_schema_json != list(self.settings.classes):
+                if detector.class_schema_json != list(
+                    self._project_class_names(session, project_id)
+                ):
                     raise ApplicationError("model_schema_mismatch", "模型类别顺序与当前项目不一致", status_code=422)
             job = JobModel(
                 project_id=project_id,
@@ -715,7 +718,7 @@ class SqlWorkbenchGateway:
                     "--conf", str(parameters["conf"]),
                     "--review-conf", str(parameters["review_conf"]),
                     "--imgsz", str(parameters["imgsz"]),
-                    "--classes", *self.settings.classes,
+                    "--classes", *self._project_class_names(session, job.project_id),
                 ]
                 job.spec_json = {
                     **job.spec_json,
@@ -785,6 +788,14 @@ class SqlWorkbenchGateway:
         if row is None:
             raise NotFoundError("项目不存在")
         return row
+
+    def _project_class_names(self, session: Session, project_id: str) -> tuple[str, ...]:
+        project = self._require_project(session, project_id)
+        if project.class_schema_id:
+            schema = session.get(ClassSchemaModel, project.class_schema_id)
+            if schema is not None:
+                return tuple(schema.names_json)
+        return tuple(self.settings.classes)
 
     @staticmethod
     def _require_dataset(session: Session, project_id: str, dataset_id: str) -> DatasetVersionModel:

@@ -5,6 +5,7 @@ import { renderLossChart } from "./training-chart.js?v=__STATIC_VERSION__";
 
 const $ = (id) => document.getElementById(id);
 const view = { options: null, jobs: [], models: [], selectedJob: null, logOffset: 0, timer: null };
+const EMPTY_LOG = "暂无日志。";
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
@@ -242,8 +243,9 @@ async function loadLog(reset = false) {
   if (reset) { view.logOffset = 0; $("workbenchLog").textContent = ""; }
   try {
     const log = await request(`/jobs/${view.selectedJob.id}/log?after=${view.logOffset}`);
+    if ($("workbenchLog").textContent === EMPTY_LOG) $("workbenchLog").textContent = "";
     if (log.content) $("workbenchLog").textContent += log.content;
-    if (!$("workbenchLog").textContent) $("workbenchLog").textContent = "暂无日志。";
+    if (!$("workbenchLog").textContent) $("workbenchLog").textContent = EMPTY_LOG;
     view.logOffset = log.next_offset;
   } catch (error) { $("workbenchLog").textContent = `日志读取失败：${error.message}`; }
 }
@@ -313,7 +315,7 @@ export async function renderModelWorkbench() {
   if (!state.projectId) { setMessage("请先选择项目。", true); return; }
   await loadOptions(); await loadJobs();
   if (!view.timer) view.timer = window.setInterval(async () => {
-    if (window.location.hash === "#workbench" && view.selectedJob) await loadJobs();
+    if (window.location.hash === "#model" && view.selectedJob) await loadJobs();
   }, 2500);
 }
 

@@ -10,6 +10,7 @@ from steel_platform.infrastructure.database import make_engine
 from steel_platform.infrastructure.models import (
     AssetModel,
     CandidatePredictionModel,
+    ClassSchemaModel,
     ExperimentRunModel,
     InferenceRunModel,
     JobLineageRefModel,
@@ -17,6 +18,7 @@ from steel_platform.infrastructure.models import (
     ModelVersionModel,
     ProjectModel,
     SourceRootModel,
+    new_id,
 )
 from steel_platform.infrastructure.workbench_executor import (
     RecordingTerminalLauncher,
@@ -24,6 +26,20 @@ from steel_platform.infrastructure.workbench_executor import (
 )
 from test_review_api import _prepared_workspace
 from test_workbench_api import _workbench_workspace
+
+
+def _set_project_classes(settings, project_id: str, names: tuple[str, ...]) -> None:
+    with Session(make_engine(settings.database_url)) as session:
+        project = session.get(ProjectModel, project_id)
+        assert project is not None
+        schema = ClassSchemaModel(
+            id=new_id(), project_id=project_id, name="custom-defects", version=1,
+            names_json=names,
+        )
+        session.add(schema)
+        session.flush()
+        project.class_schema_id = schema.id
+        session.commit()
 
 
 def test_job_worker_runs_argument_array_and_persists_utf8_log(tmp_path: Path) -> None:
@@ -169,6 +185,8 @@ def test_successful_worker_registers_immutable_output_manifest(tmp_path: Path) -
 
 def test_formal_training_output_registers_experiment_and_child_model(tmp_path: Path) -> None:
     settings, project_id, dataset_id, parent_model_id = _workbench_workspace(tmp_path)
+    project_classes = ("dent", "scratch")
+    _set_project_classes(settings, project_id, project_classes)
     from steel_platform.infrastructure.artifacts import LocalArtifactStore
     from steel_platform.infrastructure.workbench import SqlWorkbenchGateway
 
@@ -225,7 +243,7 @@ def test_formal_training_output_registers_experiment_and_child_model(tmp_path: P
         assert child.parent_id == parent_model_id
         assert child.purpose == "detector"
         assert child.verification_status == "ready"
-        assert child.class_schema_json == list(settings.classes)
+        assert child.class_schema_json == list(project_classes)
 
 
 def test_model_verification_result_promotes_a_loadable_base_weight(tmp_path: Path) -> None:
@@ -287,6 +305,7 @@ def test_model_verification_result_promotes_a_loadable_base_weight(tmp_path: Pat
 
 def test_inference_ingestion_registers_inference_run(tmp_path: Path) -> None:
     settings, project_id, _, model_id = _workbench_workspace(tmp_path)
+    _set_project_classes(settings, project_id, ("Other", "Cr"))
     engine = make_engine(settings.database_url)
     with Session(engine) as session:
         image_asset = session.scalar(
@@ -340,12 +359,12 @@ def test_inference_ingestion_registers_inference_run(tmp_path: Path) -> None:
     output.mkdir(parents=True)
     (output / "detections.csv").write_text(
         "source_file,frame_index,time_seconds,class_id,class_name,confidence,x1,y1,x2,y2\n"
-        f"{image_name},0,0,0,Cr,0.8,1,1,10,10\n",
+        f"{image_name},0,0,1,Cr,0.8,1,1,10,10\n",
         encoding="utf-8",
     )
     (output / "labels").mkdir()
     (output / "labels" / f"{Path(image_name).stem}.txt").write_text(
-        "0 0.96497 0.506167 0.0700603 0.0381834 0.8\n", encoding="utf-8"
+        "1 0.96497 0.506167 0.0700603 0.0381834 0.8\n", encoding="utf-8"
     )
 
     from steel_platform.infrastructure.workbench_results import ingest_job_outputs
@@ -369,6 +388,7 @@ def test_inference_ingestion_registers_inference_run(tmp_path: Path) -> None:
         )
         assert prediction is not None
         assert prediction.image_asset_id == image_asset_id
+        assert prediction.expected_class_id == 1
         assert prediction.box_count == 1
         assert prediction.annotation_revision_id
         revision = session.get(

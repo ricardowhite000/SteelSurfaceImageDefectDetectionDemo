@@ -48,6 +48,7 @@ _ERROR_MESSAGES_ZH = {
     "source_manifest_mismatch": "所选文件夹与已登记的数据源清单不一致",
     "import_hash_mismatch": "导入文件与清单校验值不一致",
     "concurrency_conflict": "数据已被其他操作更新，请刷新后重试",
+    "work_order_immutable": "已完成、已归档或已取消的标注工单不能直接修改，请创建修订工单",
     "database_upgrade_required": "数据库版本需要升级",
     "not_ready": "平台尚未就绪",
     "http_error": "请求地址不存在或当前操作不可用",
@@ -120,6 +121,7 @@ def create_app(
         resources=ResourceBrowserService(
             uow_factory, artifact_store=store, annotation_codec=codec,
             asset_opener=import_service.open_asset,
+            fallback_class_names=tuple(settings.classes),
         ),
         thumbnails=ThumbnailService(
             settings.artifact_root / "cache" / "thumbnails",

@@ -72,6 +72,7 @@ class AssetDetailView:
     resource_type: str
     resource_id: str
     status: str
+    class_names: tuple[str, ...]
     selected_overlay_id: str | None
     overlays: tuple[OverlaySetView, ...]
 
@@ -94,11 +95,13 @@ class ResourceBrowserService:
         artifact_store: ArtifactStore,
         annotation_codec: AnnotationCodec,
         asset_opener: Callable[[str, str], BinaryIO],
+        fallback_class_names: tuple[str, ...] = (),
     ) -> None:
         self._uow_factory = uow_factory
         self._artifacts = artifact_store
         self._codec = annotation_codec
         self._asset_opener = asset_opener
+        self._fallback_class_names = fallback_class_names
 
     def list_items(
         self,
@@ -157,6 +160,12 @@ class ResourceBrowserService:
             asset = uow.assets.get(project_id, asset_id)
             if asset is None:
                 raise NotFoundError("图片资产不存在")
+            project = uow.projects.get(project_id)
+            schema = (
+                uow.projects.get_class_schema(project_id, project.class_schema_id)
+                if project is not None and project.class_schema_id else None
+            )
+            class_names = schema.names if schema is not None else self._fallback_class_names
             revisions = tuple(uow.resources.list_revisions(project_id, asset_id))
         if not item.media_type.startswith("image/"):
             raise ApplicationError("not_image", "该文件不是可预览图片", status_code=422)
@@ -217,6 +226,7 @@ class ResourceBrowserService:
             resource_type=resource_type,
             resource_id=resource_id,
             status=item.status,
+            class_names=tuple(class_names),
             selected_overlay_id=selected,
             overlays=tuple(overlays),
         )

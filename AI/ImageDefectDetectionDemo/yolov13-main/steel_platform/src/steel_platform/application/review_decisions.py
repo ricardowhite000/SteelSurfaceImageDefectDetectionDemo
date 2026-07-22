@@ -108,6 +108,12 @@ class ReviewDecisionService:
                 item = uow.review_tasks.get_item(project_id, round_id, item_id)
                 if review_round is None or item is None:
                     raise NotFoundError("复核条目不存在")
+                if review_round.status in {"completed", "archived", "cancelled"}:
+                    raise ApplicationError(
+                        "work_order_immutable",
+                        "已完成、已归档或已取消的标注工单不能直接修改，请创建修订工单",
+                        status_code=409,
+                    )
                 if item.revision != command.expected_revision:
                     raise RevisionConflictError(command.expected_revision, item.revision)
                 class_names = self._resolve_class_names(uow, project_id, review_round)

@@ -84,3 +84,22 @@ def test_review_workspace_escapes_imported_names_and_api_metadata() -> None:
     assert "classLabels[item.expected_class_name]" in source
     assert 'escapeHtml(zh("status", item.state))' in source
     assert "escapeHtml(value ??" in source
+
+
+def test_read_only_archive_blocks_canvas_keyboard_and_submission() -> None:
+    source = REVIEW_JS.read_text(encoding="utf-8")
+
+    assert "function canEdit()" in source
+    assert "if (!canEdit()) return;" in source
+    assert "if (reviewState.readOnly) return;" in source
+    assert "if (reviewState.readOnly && !event.altKey) return;" in source
+
+
+def test_multi_class_editor_preserves_box_classes_and_offers_selector() -> None:
+    source = REVIEW_JS.read_text(encoding="utf-8")
+    index = INDEX.read_text(encoding="utf-8")
+
+    assert 'id="boxClassSelector"' in index
+    assert "item.boxes.map((box) => ({ ...box }))" in source
+    assert 'reviewState.current.annotation_mode === "single_class_locked"' in source
+    assert "box.class_id = Number" in source

@@ -62,6 +62,8 @@ class ReviewItemDetail:
     filename: str
     expected_class_id: int
     expected_class_name: str
+    class_names: tuple[str, ...]
+    annotation_mode: str
     source_status: str
     selection_reason: str
     min_confidence: float | None
@@ -126,6 +128,12 @@ class ReviewTaskQueryService:
             if item is None:
                 raise NotFoundError("复核条目不存在")
             class_names = self._resolve_class_names(uow, project_id, review_round)
+            project = uow.projects.get(project_id)
+            annotation_policy = project.annotation_policy if project is not None else {}
+            annotation_mode = (annotation_policy or {}).get("mode", "multi_class")
+            enforce_expected_class = (
+                annotation_mode == "single_class_locked"
+            )
             draft = uow.review_tasks.get_draft(project_id, round_id, item_id)
             if draft is not None and item.state == ReviewState.DOUBTFUL.value:
                 boxes = tuple(AnnotationBox(**box) for box in draft.boxes_json)
@@ -136,6 +144,7 @@ class ReviewTaskQueryService:
                     project_id,
                     item.current_revision_id or item.candidate_revision_id,
                     item.expected_class_id,
+                    enforce_expected_class=enforce_expected_class,
                 )
                 note = item.note
             return ReviewItemDetail(
@@ -145,6 +154,8 @@ class ReviewTaskQueryService:
                 filename=item.filename,
                 expected_class_id=item.expected_class_id,
                 expected_class_name=self._class_name(class_names, item.expected_class_id),
+                class_names=class_names,
+                annotation_mode=annotation_mode,
                 source_status=item.source_status,
                 selection_reason=item.selection_reason,
                 min_confidence=item.min_confidence,
@@ -162,6 +173,8 @@ class ReviewTaskQueryService:
         project_id: str,
         revision_id: str | None,
         expected_class_id: int,
+        *,
+        enforce_expected_class: bool,
     ) -> tuple[AnnotationBox, ...]:
         if revision_id is None:
             return ()
@@ -172,7 +185,7 @@ class ReviewTaskQueryService:
             raise RuntimeError("artifact_store and annotation_codec are required to read annotations")
         with self._artifact_store.open(revision.storage_key) as stream:
             boxes = self._annotation_codec.decode(stream.read())
-        if any(box.class_id != expected_class_id for box in boxes):
+        if enforce_expected_class and any(box.class_id != expected_class_id for box in boxes):
             raise ApplicationError("class_mismatch", "候选框类别与文件前缀类别不一致", status_code=422)
         return boxes
 
